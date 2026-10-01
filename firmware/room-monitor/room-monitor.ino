@@ -1,9 +1,9 @@
 // Aura room monitor — ESP32 Dev Module + SCD40 (CO2 / temperature / humidity) + BH1750 (light).
 //
-// Reads both sensors, prints to serial, and uploads to a Supabase edge function once a
-// minute. If the network or the server is unreachable the readings go into a small buffer
-// and get flushed as one batch when the connection comes back, so a router reboot leaves a
-// gap of nothing rather than a gap in the data.
+// Reads both sensors every 5 seconds, prints to serial, and uploads to a Supabase edge
+// function every 15 seconds. If the network or the server is unreachable the readings go
+// into a ring buffer and get flushed as one batch when the connection comes back, so a
+// router reboot leaves a gap of nothing rather than a gap in the data.
 //
 // Libraries (Arduino Library Manager):
 //   - BH1750                by Christopher Laws
