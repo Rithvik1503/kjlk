@@ -113,8 +113,11 @@ actor SupabaseClient {
         do {
             return try await task.value.accessToken
         } catch {
-            // A rejected refresh token means the session is gone for good.
-            if case SupabaseError.server(let status, _) = error, status == 400 || status == 401 {
+            // A rejected refresh token means the session is gone for good. `error` is
+            // `any Error` here, so it has to be cast before the case pattern applies.
+            if let supabaseError = error as? SupabaseError,
+               case let .server(status, _) = supabaseError,
+               status == 400 || status == 401 {
                 self.session = nil
                 Keychain.remove(Self.sessionKey)
                 throw SupabaseError.notSignedIn

@@ -57,12 +57,17 @@ final class AuraStore: ObservableObject {
     /// Polls are a safety net under Realtime, and the only source when the socket is down.
     private var pollInterval: TimeInterval { isLiveConnected ? 300 : 60 }
 
+    /// `Preferences` is main-actor isolated, and a default argument is evaluated in a
+    /// nonisolated context, so it can't be constructed in the signature. Passing nil and
+    /// building it in the body — which *is* isolated — gives the same ergonomics.
     init(
-        preferences: Preferences = Preferences(),
+        preferences: Preferences? = nil,
         client: SupabaseClient = SupabaseClient(),
         realtime: RealtimeChannel = RealtimeChannel(),
         cache: ReadingCache = ReadingCache()
     ) {
+        let preferences = preferences ?? Preferences()
+
         self.preferences = preferences
         self.client = client
         self.realtime = realtime
@@ -202,8 +207,11 @@ final class AuraStore: ObservableObject {
     func refresh() async {
         refreshTask?.cancel()
 
-        let task = Task { [weak self] in
-            await self?.performRefresh()
+        // Unwrapped rather than optional-chained: `await self?.performRefresh()` would make
+        // the closure return `Void?`, giving a `Task<Void?, Never>`.
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performRefresh()
         }
         refreshTask = task
         await task.value
