@@ -365,17 +365,20 @@ static bool flushBuffer() {
 
     if (responseCode >= 200 && responseCode < 300) {
       accepted = true;
-    } else if (responseCode == 401 || responseCode == 403) {
-      // The payload is fine; the device isn't allowed in. That gets fixed by correcting
-      // DEVICE_TOKEN, and the readings are still good when it is — so keep buffering them
-      // rather than throwing away everything recorded while the token was wrong.
-      Serial.println("Rejected: check DEVICE_TOKEN matches DEVICE_INGEST_TOKEN. Readings kept.");
-    } else if (responseCode >= 400 && responseCode < 500 && responseCode != 408 && responseCode != 429) {
-      // Genuinely malformed or unacceptable — retrying the same bytes would fail forever.
+    } else if (responseCode == 400 || responseCode == 413 || responseCode == 422) {
+      // Only these say something about the payload itself: malformed, too large, or
+      // unprocessable. Re-sending the same bytes would fail the same way forever.
       Serial.print("Server rejected these readings (");
       Serial.print(responseCode);
       Serial.println("); discarding them.");
       accepted = true;
+    } else {
+      // Everything else — 401 wrong token, 404 wrong URL, 5xx, a timeout — is about the
+      // connection or the configuration, not the data. The readings are still good once it
+      // is fixed, so they stay buffered.
+      Serial.print("Not accepted (");
+      Serial.print(responseCode);
+      Serial.println("). Readings kept — check DEVICE_TOKEN and INGEST_URL.");
     }
   } else {
     Serial.print("Upload failed: ");
