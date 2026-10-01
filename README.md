@@ -25,6 +25,10 @@ Supabase edge function  ──writes with the service role key──▶  public.
 | `supabase/` | Schema, policies and the ingest function. |
 | `firmware/` | The Arduino sketch for the ESP32. |
 
+**[SETUP.md](SETUP.md) is the click-by-click version of everything below** — what to run, in
+what order, and how to check each step worked. This file is the explanation; that one is the
+checklist.
+
 ---
 
 ## Before anything else: rotate your token
