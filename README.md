@@ -113,8 +113,8 @@ Board: *ESP32 Dev Module*. Wiring: SDA → GPIO21, SCL → GPIO22, both sensors 
 What changed from the original sketch:
 
 - **Secrets moved out** into gitignored `secrets.h`.
-- **Offline buffering.** Readings go into a 60-slot ring buffer and upload as one batch. A
-  router reboot now costs you nothing instead of a gap in the data.
+- **Offline buffering.** Readings go into a 240-slot ring buffer and upload as one batch,
+  at most 100 per request. A router reboot now costs you nothing instead of a gap in the data.
 - **NTP time.** Buffered readings carry their real timestamp rather than arriving stamped with
   whenever the network came back.
 - **Non-blocking loop.** The original `delay(5000)` plus an early `return` meant a cycle where

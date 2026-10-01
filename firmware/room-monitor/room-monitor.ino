@@ -27,12 +27,24 @@
 // Tuning
 // ---------------------------------------------------------------------------
 
-static const unsigned long SAMPLE_INTERVAL_MS = 5000;    // SCD40 produces a reading every 5s.
-static const unsigned long UPLOAD_INTERVAL_MS = 60000;   // One upload a minute.
-static const unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
+// How often a reading is taken. This sets how dense the data is: one row per sample.
+// 5s is as fast as the SCD40 goes, and works out at ~17k rows a day.
+static const unsigned long SAMPLE_INTERVAL_MS = 5000;
 
+// How often buffered readings are sent. This sets latency, not density — every sample taken
+// since the last upload goes out together, each carrying its own timestamp.
+static const unsigned long UPLOAD_INTERVAL_MS = 15000;
+
+static const unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
 static const int WIFI_ATTEMPTS_PER_NETWORK = 20;         // x 500 ms = 10 s per network.
-static const size_t BUFFER_CAPACITY = 60;                // An hour of readings held in RAM.
+
+// Readings held in RAM while offline — 20 minutes' worth at a 5s sample interval.
+static const size_t BUFFER_CAPACITY = 240;
+
+// Most readings in one request. The edge function rejects more than 120, and a rejection is
+// a 4xx, which this sketch treats as "the server will never take these" and discards. A
+// backlog larger than this drains over several uploads instead of being thrown away.
+static const size_t MAX_UPLOAD_BATCH = 100;
 
 static const int KNOWN_WIFI_COUNT = sizeof(KNOWN_WIFIS) / sizeof(KNOWN_WIFIS[0]);
 
@@ -208,8 +220,10 @@ static bool flushBuffer() {
   http.addHeader("x-device-token", DEVICE_TOKEN);
   http.setTimeout(15000);
 
-  size_t sending = bufferCount;
+  size_t sending = (bufferCount < MAX_UPLOAD_BATCH) ? bufferCount : MAX_UPLOAD_BATCH;
+
   String json = "[";
+  json.reserve(sending * 140 + 2);   // One allocation rather than a hundred reallocations.
   for (size_t i = 0; i < sending; i++) {
     if (i > 0) json += ",";
     appendReadingJSON(json, buffer[(bufferHead + i) % BUFFER_CAPACITY]);
