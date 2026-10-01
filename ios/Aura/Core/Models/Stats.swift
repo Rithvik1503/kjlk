@@ -164,22 +164,26 @@ enum Trend {
     }
 
     /// Y-axis bounds that frame the data with a little headroom, snapped to round numbers.
+    ///
+    /// Forming a `ClosedRange` whose bounds are reversed — or involve a NaN — is a trap, not
+    /// an error, so the bounds are checked before the range is built rather than after.
     static func axisRange(for points: [TrendPoint], metric: MetricKind) -> ClosedRange<Double> {
-        let values = points.flatMap { [$0.minimum, $0.maximum] }
+        let values = points.flatMap { [$0.minimum, $0.maximum] }.filter(\.isFinite)
         guard let low = values.min(), let high = values.max() else { return metric.nominalRange }
 
+        let step = metric.axisStep
         let span = high - low
         let padding = max(span * 0.18, metric.axisMinimumPadding)
-        let lower = low - padding
-        let upper = high + padding
 
-        let step = metric.axisStep
-        let snappedLower = (lower / step).rounded(.down) * step
-        let snappedUpper = (upper / step).rounded(.up) * step
+        let snappedLower = ((low - padding) / step).rounded(.down) * step
+        let snappedUpper = ((high + padding) / step).rounded(.up) * step
 
         let floor = metric.axisFloor
-        let result = max(snappedLower, floor)...max(snappedUpper, floor + step)
-        return result
+        let lower = max(snappedLower, floor)
+        let upper = max(snappedUpper, lower + step)
+
+        guard lower.isFinite, upper.isFinite, lower < upper else { return metric.nominalRange }
+        return lower...upper
     }
 }
 

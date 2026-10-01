@@ -7,7 +7,7 @@ import SwiftUI
 /// before you read the axis. Dragging scrubs: a lollipop follows the finger with the exact
 /// value and timestamp under it.
 struct TrendChart: View {
-    enum Style {
+    enum Style: Equatable {
         /// Smoothed line with a gradient fill. Best when points are dense.
         case area
         /// One bar per bucket, coloured by value. Best for coarse buckets — the 30-day view.
@@ -22,134 +22,77 @@ struct TrendChart: View {
     var showsComfortBand: Bool = true
 
     @State private var selectedDate: Date?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// Points converted into display units once, up front.
-    private var plotted: [TrendPoint] {
-        guard scale.metric == .temperature else { return points }
-        return points.map {
-            TrendPoint(
-                date: $0.date,
-                value: scale.convert($0.value),
-                minimum: scale.convert($0.minimum),
-                maximum: scale.convert($0.maximum)
-            )
-        }
-    }
-
-    private var domain: ClosedRange<Double> {
-        Trend.axisRange(for: plotted, metric: scale.metric)
-    }
-
-    private var selectedPoint: TrendPoint? {
-        guard let selectedDate, !plotted.isEmpty else { return nil }
-        return plotted.min {
-            abs($0.date.timeIntervalSince(selectedDate)) < abs($1.date.timeIntervalSince(selectedDate))
-        }
-    }
 
     var body: some View {
+        // Resolved once per render and handed down. Previously the axis domain was a computed
+        // property read inside the mark loop, which re-derived the whole converted series for
+        // every point on screen.
+        let model = TrendChartModel(points: points, scale: scale, showsComfortBand: showsComfortBand)
+
         Group {
-            if plotted.isEmpty {
+            if model.points.isEmpty {
                 EmptyChartPlaceholder(height: height)
             } else {
-                chart
+                TrendChartCanvas(
+                    model: model,
+                    range: range,
+                    style: style,
+                    selectedDate: $selectedDate
+                )
             }
         }
         .frame(height: height)
     }
+}
 
-    private var chart: some View {
-        Chart {
-            if showsComfortBand, let comfort = scale.comfortBand {
-                RectangleMark(
-                    yStart: .value("Comfort low", max(comfort.lowerBound, domain.lowerBound)),
-                    yEnd: .value("Comfort high", min(comfort.upperBound, domain.upperBound))
-                )
-                .foregroundStyle(Color.auraGreen.opacity(0.08))
-            }
+// MARK: - Model
 
-            ForEach(plotted) { point in
-                switch style {
-                case .area:
-                    AreaMark(
-                        x: .value("Time", point.date),
-                        yStart: .value("Floor", domain.lowerBound),
-                        yEnd: .value(scale.metric.shortTitle, point.value)
-                    )
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(areaFill)
+/// Everything the chart needs, in display units, computed once.
+private struct TrendChartModel {
+    let points: [TrendPoint]
+    let domain: ClosedRange<Double>
+    let comfort: ClosedRange<Double>?
+    let scale: DisplayScale
 
-                    LineMark(
-                        x: .value("Time", point.date),
-                        y: .value(scale.metric.shortTitle, point.value)
-                    )
-                    .interpolationMethod(.monotone)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                    .foregroundStyle(lineStroke)
+    init(points rawPoints: [TrendPoint], scale: DisplayScale, showsComfortBand: Bool) {
+        self.scale = scale
 
-                case .bars:
-                    BarMark(
-                        x: .value("Time", point.date),
-                        y: .value(scale.metric.shortTitle, point.value),
-                        width: .ratio(0.62)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-                    .foregroundStyle(scale.tint(for: point.value))
-                }
-            }
-
-            if let selectedPoint {
-                RuleMark(x: .value("Selected", selectedPoint.date))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
-                    .foregroundStyle(Color.auraSecondaryText.opacity(0.6))
-
-                PointMark(
-                    x: .value("Selected", selectedPoint.date),
-                    y: .value(scale.metric.shortTitle, selectedPoint.value)
-                )
-                .symbolSize(90)
-                .foregroundStyle(scale.tint(for: selectedPoint.value))
-                .annotation(position: .top, spacing: 8, overflowResolution: .init(x: .fit, y: .disabled)) {
-                    ChartCallout(point: selectedPoint, scale: scale, range: range)
-                }
-            }
+        // Convert into display units, and drop anything non-finite — a NaN would propagate
+        // into the axis bounds and trap when they're formed into a range.
+        let converted: [TrendPoint] = rawPoints.compactMap { point in
+            let value = scale.convert(point.value)
+            let minimum = scale.convert(point.minimum)
+            let maximum = scale.convert(point.maximum)
+            guard value.isFinite, minimum.isFinite, maximum.isFinite else { return nil }
+            return TrendPoint(date: point.date, value: value, minimum: minimum, maximum: maximum)
         }
-        .chartYScale(domain: domain)
-        .chartXSelection(value: $selectedDate)
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
-                AxisGridLine()
-                    .foregroundStyle(Color.white.opacity(0.06))
-                AxisValueLabel {
-                    if let number = value.as(Double.self) {
-                        Text(scale.format(number))
-                            .font(.auraCaption)
-                            .foregroundStyle(Color.auraTertiaryText)
-                    }
-                }
-            }
+
+        self.points = converted
+        self.domain = Trend.axisRange(for: converted, metric: scale.metric)
+
+        // Clipped to the visible axis so the band never draws inverted.
+        if showsComfortBand,
+           let band = scale.comfortBand,
+           band.lowerBound < domain.upperBound,
+           band.upperBound > domain.lowerBound {
+            self.comfort = max(band.lowerBound, domain.lowerBound)...min(band.upperBound, domain.upperBound)
+        } else {
+            self.comfort = nil
         }
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: range.axisTickCount)) { value in
-                AxisValueLabel {
-                    if let date = value.as(Date.self) {
-                        Text(date, format: range.axisFormat)
-                            .font(.auraCaption)
-                            .foregroundStyle(Color.auraTertiaryText)
-                    }
-                }
-            }
-        }
-        .auraAnimation(Motion.gentle, value: plotted.count)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(scale.metric.title) over the last \(range.title)")
-        .accessibilityValue(accessibilitySummary)
     }
 
-    private var areaFill: LinearGradient {
-        let tint = scale.tint(for: plotted.last?.value ?? domain.lowerBound)
-        return LinearGradient(
+    func nearestPoint(to date: Date) -> TrendPoint? {
+        points.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
+    }
+
+    var tint: Color {
+        scale.tint(for: points.last?.value)
+    }
+
+    var areaFill: LinearGradient {
+        LinearGradient(
             colors: [tint.opacity(0.42), tint.opacity(0.02)],
             startPoint: .top,
             endPoint: .bottom
@@ -157,14 +100,14 @@ struct TrendChart: View {
     }
 
     /// Stroke coloured by height, so the line changes colour as it crosses a band boundary.
-    private var lineStroke: LinearGradient {
+    var lineStroke: LinearGradient {
         let span = domain.upperBound - domain.lowerBound
-        guard span > 0 else {
-            return LinearGradient(colors: [scale.tint(for: domain.lowerBound)], startPoint: .bottom, endPoint: .top)
-        }
-
         let nominal = scale.nominalRange
         let nominalSpan = nominal.upperBound - nominal.lowerBound
+
+        guard span > 0, nominalSpan > 0 else {
+            return LinearGradient(colors: [tint], startPoint: .bottom, endPoint: .top)
+        }
 
         let stops = scale.gradientStops.compactMap { stop -> Gradient.Stop? in
             // Where this stop sits on the metric's full ramp, re-expressed against the
@@ -176,27 +119,166 @@ struct TrendChart: View {
         }
 
         guard stops.count > 1 else {
-            return LinearGradient(
-                colors: [scale.tint(for: (domain.lowerBound + domain.upperBound) / 2)],
-                startPoint: .bottom,
-                endPoint: .top
-            )
+            return LinearGradient(colors: [tint], startPoint: .bottom, endPoint: .top)
         }
         return LinearGradient(stops: stops, startPoint: .bottom, endPoint: .top)
     }
 
-    private var accessibilitySummary: String {
+    var accessibilitySummary: String {
         guard
-            let low = plotted.map(\.minimum).min(),
-            let high = plotted.map(\.maximum).max(),
-            !plotted.isEmpty
+            !points.isEmpty,
+            let low = points.map(\.minimum).min(),
+            let high = points.map(\.maximum).max()
         else { return "No data" }
 
-        let average = plotted.reduce(0) { $0 + $1.value } / Double(plotted.count)
+        let average = points.reduce(0) { $0 + $1.value } / Double(points.count)
         return """
         Average \(scale.formatWithUnit(average)), \
         from \(scale.formatWithUnit(low)) to \(scale.formatWithUnit(high)).
         """
+    }
+}
+
+// MARK: - Canvas
+
+/// The chart itself.
+///
+/// The marks are assembled from small `@ChartContentBuilder` pieces, and the area and bar
+/// styles are separate branches rather than a `switch` inside the mark loop. That keeps the
+/// generic type Swift Charts has to instantiate shallow — nesting a conditional *inside* a
+/// `ForEach` builds a type deep enough to crash metadata instantiation at runtime.
+private struct TrendChartCanvas: View {
+    let model: TrendChartModel
+    let range: TimeRange
+    let style: TrendChart.Style
+    @Binding var selectedDate: Date?
+
+    private var scale: DisplayScale { model.scale }
+
+    private var selectedPoint: TrendPoint? {
+        selectedDate.flatMap(model.nearestPoint(to:))
+    }
+
+    var body: some View {
+        Chart {
+            comfortBand
+            series
+            selection
+        }
+        .chartYScale(domain: model.domain)
+        .chartXSelection(value: $selectedDate)
+        .chartYAxis { yAxis }
+        .chartXAxis { xAxis }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(scale.metric.title) over the last \(range.title)")
+        .accessibilityValue(model.accessibilitySummary)
+    }
+
+    // MARK: Marks
+
+    @ChartContentBuilder
+    private var comfortBand: some ChartContent {
+        if let comfort = model.comfort {
+            RectangleMark(
+                yStart: .value("Comfort low", comfort.lowerBound),
+                yEnd: .value("Comfort high", comfort.upperBound)
+            )
+            .foregroundStyle(Color.auraGreen.opacity(0.08))
+        }
+    }
+
+    @ChartContentBuilder
+    private var series: some ChartContent {
+        if style == .bars {
+            bars
+        } else {
+            areaAndLine
+        }
+    }
+
+    @ChartContentBuilder
+    private var areaAndLine: some ChartContent {
+        ForEach(model.points) { point in
+            AreaMark(
+                x: .value("Time", point.date),
+                yStart: .value("Floor", model.domain.lowerBound),
+                yEnd: .value(scale.metric.shortTitle, point.value)
+            )
+            .interpolationMethod(.monotone)
+            .foregroundStyle(model.areaFill)
+        }
+
+        ForEach(model.points) { point in
+            LineMark(
+                x: .value("Time", point.date),
+                y: .value(scale.metric.shortTitle, point.value)
+            )
+            .interpolationMethod(.monotone)
+            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+            .foregroundStyle(model.lineStroke)
+        }
+    }
+
+    @ChartContentBuilder
+    private var bars: some ChartContent {
+        ForEach(model.points) { point in
+            BarMark(
+                x: .value("Time", point.date),
+                y: .value(scale.metric.shortTitle, point.value),
+                width: .ratio(0.62)
+            )
+            .foregroundStyle(scale.tint(for: point.value))
+        }
+    }
+
+    @ChartContentBuilder
+    private var selection: some ChartContent {
+        if let point = selectedPoint {
+            RuleMark(x: .value("Selected", point.date))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                .foregroundStyle(Color.auraSecondaryText.opacity(0.6))
+
+            PointMark(
+                x: .value("Selected", point.date),
+                y: .value(scale.metric.shortTitle, point.value)
+            )
+            .symbolSize(90)
+            .foregroundStyle(scale.tint(for: point.value))
+            .annotation(position: .top, spacing: 8, overflowResolution: .init(x: .fit, y: .disabled)) {
+                ChartCallout(point: point, scale: scale, range: range)
+            }
+        }
+    }
+
+    // MARK: Axes
+
+    @AxisContentBuilder
+    private var yAxis: some AxisContent {
+        AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
+            AxisGridLine()
+                .foregroundStyle(Color.white.opacity(0.06))
+
+            AxisValueLabel {
+                if let number = value.as(Double.self) {
+                    Text(scale.format(number))
+                        .font(.auraCaption)
+                        .foregroundStyle(Color.auraTertiaryText)
+                }
+            }
+        }
+    }
+
+    @AxisContentBuilder
+    private var xAxis: some AxisContent {
+        AxisMarks(values: .automatic(desiredCount: range.axisTickCount)) { value in
+            AxisValueLabel {
+                if let date = value.as(Date.self) {
+                    Text(date, format: range.axisFormat)
+                        .font(.auraCaption)
+                        .foregroundStyle(Color.auraTertiaryText)
+                }
+            }
+        }
     }
 }
 
