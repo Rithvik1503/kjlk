@@ -10,6 +10,10 @@ import SwiftUI
 final class TrendsStore: ObservableObject {
     @Published var window: TrendWindow = .week
     @Published private(set) var buckets: [MetricBucket] = []
+    @Published private(set) var zoneBuckets: [ZoneBucket] = []
+    /// Set when only the per-zone function is missing, so Areas can say so without hiding
+    /// the rest of the screen.
+    @Published private(set) var zonesUnavailable = false
     @Published private(set) var isLoading = false
     /// Set when the aggregate function is missing, so the screen can say which migration.
     @Published private(set) var needsMigration = false
@@ -66,6 +70,56 @@ final class TrendsStore: ObservableObject {
             return (date, byDate[normalise(date)])
         }
     }
+
+    // MARK: - Areas
+
+    /// Zones that reported in this window, in the order they should be listed.
+    ///
+    /// Sorted by how much they recorded rather than alphabetically — the room the monitor
+    /// actually sat in should lead, not whichever name starts with an A.
+    var zones: [String] {
+        var totals: [String: Int] = [:]
+        for bucket in zoneBuckets {
+            totals[bucket.zone, default: 0] += 1
+        }
+        return totals.keys.sorted { left, right in
+            let a = totals[left] ?? 0
+            let b = totals[right] ?? 0
+            return a == b ? left < right : a > b
+        }
+    }
+
+    /// One value per slot for a metric within a single zone, gaps included.
+    func values(for metric: MetricKind, zone: String, endingAt anchor: Date) -> [Double?] {
+        let start = windowStart(endingAt: anchor)
+        let component: Calendar.Component = window.isMonthly ? .month : .day
+
+        let byDate = Dictionary(
+            zoneBuckets
+                .filter { $0.zone == zone }
+                .map { (normalise($0.bucket), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        return (0..<window.slots).compactMap { step in
+            guard let date = calendar.date(byAdding: component, value: step, to: start) else { return nil }
+            return byDate[normalise(date)]?.value(for: metric)
+        }
+    }
+
+    func average(for metric: MetricKind, zone: String, endingAt anchor: Date) -> Double? {
+        let present = values(for: metric, zone: zone, endingAt: anchor).compactMap { $0 }
+        guard !present.isEmpty else { return nil }
+        return present.reduce(0, +) / Double(present.count)
+    }
+
+    /// Axis top for a metric across every zone, so one room's bars are comparable with
+    /// another's rather than each being scaled to itself.
+    func zoneObservedMax(for metric: MetricKind) -> Double? {
+        zoneBuckets.compactMap { $0.value(for: metric) }.filter(\.isFinite).max()
+    }
+
+    // MARK: - Whole-window series
 
     func values(for metric: MetricKind, endingAt anchor: Date) -> [Double?] {
         slots(endingAt: anchor).map { $0.bucket?.value(for: metric) }
@@ -139,6 +193,31 @@ final class TrendsStore: ObservableObject {
         await task.value
     }
 
+    /// Areas is additive — a project without migration 0005 still gets the rest of the
+    /// screen, and a note in that one section.
+    private func loadZones(endingAt anchor: Date) async {
+        do {
+            zoneBuckets = try await client.zoneBuckets(
+                from: windowStart(endingAt: anchor),
+                to: windowEnd(endingAt: anchor),
+                unit: window.bucketUnit,
+                timeZone: calendar.timeZone,
+                deviceID: preferences.selectedDeviceID
+            )
+            zonesUnavailable = false
+        } catch is CancellationError {
+            return
+        } catch {
+            zoneBuckets = []
+            // PostgREST answers an unknown function with 404.
+            if let supabaseError = error as? SupabaseError,
+               case let .server(status, _) = supabaseError,
+               status == 404 {
+                zonesUnavailable = true
+            }
+        }
+    }
+
     private func performLoad(endingAt anchor: Date) async {
         isLoading = true
         defer { isLoading = false }
@@ -156,11 +235,14 @@ final class TrendsStore: ObservableObject {
             buckets = fetched
             needsMigration = false
             errorMessage = nil
+
+            await loadZones(endingAt: anchor)
         } catch is CancellationError {
             return
         } catch let error as SupabaseError {
             guard !Task.isCancelled else { return }
             buckets = []
+            zoneBuckets = []
 
             // PostgREST answers an unknown function with 404; anything else is a real failure.
             if case let .server(status, _) = error, status == 404 {

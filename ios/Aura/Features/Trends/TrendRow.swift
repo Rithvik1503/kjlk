@@ -5,6 +5,15 @@ import SwiftUI
 /// Collapsed it shows the title, a dot-matrix preview and the window's latest value.
 /// Expanded, the preview gives way to the full chart, an axis, and the period average.
 struct TrendRow: View {
+    /// What the figure on the right reports when nothing is being scrubbed.
+    enum Headline {
+        /// The most recent slot that holds a value.
+        case latest
+        /// The mean across the whole window — what Areas shows, since a room is a place you
+        /// ask "what is it usually like in here", not "what was it a moment ago".
+        case average
+    }
+
     let metric: MetricKind
     let window: TrendWindow
     /// One entry per slot in the window, oldest first; nil where nothing was recorded.
@@ -12,6 +21,7 @@ struct TrendRow: View {
     let windowAverage: Double?
     /// Largest value in the loaded history, which sets the top of the fixed axis.
     let observedMax: Double?
+    var headline: Headline = .latest
 
     @State private var isExpanded = false
     @State private var activeIndex: Int?
@@ -28,12 +38,12 @@ struct TrendRow: View {
         values.reversed().compactMap { $0 }.first
     }
 
-    /// What the right-hand figure shows: the scrubbed slot, else the latest.
+    /// What the right-hand figure shows: the scrubbed slot, else whichever the headline asks for.
     private var shownValue: Double? {
         if let activeIndex, slots.indices.contains(activeIndex) {
             return slots[activeIndex].value
         }
-        return latest
+        return headline == .average ? windowAverage : latest
     }
 
     private var scrubLabel: String? {
@@ -80,10 +90,17 @@ struct TrendRow: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Text(metric.title)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color.auraPrimaryText)
-                .fixedSize(horizontal: true, vertical: false)
+            Label {
+                Text(metric.title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.auraPrimaryText)
+            } icon: {
+                Image(systemName: metric.symbol)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.auraMutedText)
+            }
+            .labelStyle(.titleAndIcon)
+            .fixedSize(horizontal: true, vertical: false)
 
             Spacer(minLength: 8)
 
@@ -103,6 +120,11 @@ struct TrendRow: View {
                         .font(.auraMono(8.5))
                         .tracking(0.8)
                         .foregroundStyle(Color.auraDimText)
+                } else if headline == .average {
+                    Text("\(window.averageLabel) AVG")
+                        .font(.auraMono(8.5))
+                        .tracking(0.8)
+                        .foregroundStyle(Color.auraDimText)
                 }
             }
             .frame(minWidth: 56, alignment: .trailing)
@@ -117,7 +139,7 @@ struct TrendRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(metric.title)
-        .accessibilityValue(latest.map { "\(metric.format($0)) \(metric.unit)" } ?? "No data")
+        .accessibilityValue(shownValue.map { "\(metric.format($0)) \(metric.unit)" } ?? "No data")
         .accessibilityHint(isExpanded ? "Collapses the chart" : "Expands the chart")
         .accessibilityAddTraits(.isButton)
     }

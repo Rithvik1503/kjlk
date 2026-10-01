@@ -248,6 +248,32 @@ actor SupabaseClient {
         }
     }
 
+    /// The same buckets as `metricBuckets`, split by zone, for the Areas section.
+    func zoneBuckets(
+        from start: Date,
+        to end: Date,
+        unit: String,
+        timeZone: TimeZone,
+        deviceID: String?
+    ) async throws -> [ZoneBucket] {
+        var body: [String: String] = [
+            "p_from": PostgresDate.string(from: start),
+            "p_to": PostgresDate.string(from: end),
+            "p_unit": unit,
+            "p_tz": timeZone.identifier,
+        ]
+        if let deviceID, !deviceID.isEmpty {
+            body["p_device"] = deviceID
+        }
+
+        let data = try await restPost(function: "aura_zone_buckets", body: body)
+        do {
+            return try JSONDecoder().decode([ZoneBucket].self, from: data)
+        } catch {
+            throw SupabaseError.decoding(error.localizedDescription)
+        }
+    }
+
     private static let readingColumns =
         "id,device_id,zone,recorded_at,co2_ppm,temperature_c,humidity_percent,light_lux"
 

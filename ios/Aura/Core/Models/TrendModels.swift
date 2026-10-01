@@ -53,6 +53,51 @@ extension MetricBucket: Decodable {
     }
 }
 
+/// One bucket of history for one zone. Only the two metrics the Areas section shows.
+struct ZoneBucket: Identifiable, Hashable, Sendable {
+    let bucket: Date
+    let zone: String
+    let co2: Double?
+    let humidity: Double?
+
+    var id: String { "\(zone)@\(bucket.timeIntervalSince1970)" }
+
+    func value(for metric: MetricKind) -> Double? {
+        switch metric {
+        case .co2: co2
+        case .humidity: humidity
+        // The section covers CO2 and humidity only; nothing asks for the others.
+        case .temperature, .light: nil
+        }
+    }
+}
+
+extension ZoneBucket: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case bucket
+        case zone
+        case co2 = "co2_ppm"
+        case humidity = "humidity_percent"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        let stamp = try container.decode(String.self, forKey: .bucket)
+        guard let date = PostgresDate.parse(stamp) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .bucket,
+                in: container,
+                debugDescription: "Unrecognised bucket timestamp \(stamp)"
+            )
+        }
+        bucket = date
+        zone = try container.decodeIfPresent(String.self, forKey: .zone) ?? "Unlabelled"
+        co2 = try container.decodeIfPresent(Double.self, forKey: .co2)
+        humidity = try container.decodeIfPresent(Double.self, forKey: .humidity)
+    }
+}
+
 /// How far back Trends looks, and at what resolution.
 enum TrendWindow: Int, CaseIterable, Identifiable, Sendable {
     case week
@@ -139,4 +184,7 @@ extension MetricKind {
 
     /// Order the Trends list shows them in.
     static let trendOrder: [MetricKind] = [.co2, .humidity, .light, .temperature]
+
+    /// The two the Areas section breaks down per room.
+    static let areaMetrics: [MetricKind] = [.co2, .humidity]
 }

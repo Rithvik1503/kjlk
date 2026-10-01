@@ -60,6 +60,9 @@ means in Postgres, bucketed in your own time zone — six months of minute-resol
 a quarter of a million rows and the screen needs six numbers from them. Without it Trends says
 so and tells you which file to run.
 
+`0005_zone_buckets.sql` is required by the Trends tab's Areas section, which splits the same
+aggregates by zone. Without it that one section says so and the rest of the screen is fine.
+
 `0004_zone.sql` is required by the zone button. Run it *before* deploying the updated function
 or flashing — the column is nullable, so a device that doesn't send a zone keeps working either
 side of the change.
@@ -211,6 +214,11 @@ push from the server, which this doesn't do.
 The second tab: every sensor over **7 days, a month, or 6 months**, one window picker driving
 all four rows. Stepping the header moves a whole window at a time, since the point of the
 screen is the shape rather than a single reading.
+
+Below that, **Areas** breaks the same window down per room — one block per zone the monitor has
+reported from, each with CO₂ and humidity. These rows headline the window's *average* rather
+than the latest reading, since a room is somewhere you ask "what is it usually like in here".
+Their axis is shared across zones, so one room's bars are comparable with another's.
 
 Each row collapses to a title, a dot-matrix preview and the latest value, and expands into its
 own chart — dithered bars in every window — with a fixed y-axis, the period average, and dates

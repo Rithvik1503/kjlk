@@ -18,6 +18,16 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// SF Symbol shown beside the name in a Trends row.
+    var symbol: String {
+        switch self {
+        case .co2: "aqi.medium"
+        case .temperature: "thermometer.medium"
+        case .humidity: "humidity.fill"
+        case .light: "sun.max.fill"
+        }
+    }
+
     var unit: String {
         switch self {
         case .co2: "ppm"

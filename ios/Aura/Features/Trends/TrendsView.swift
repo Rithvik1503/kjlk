@@ -27,18 +27,19 @@ struct TrendsView: View {
                             .padding(.horizontal, 16)
                             .padding(.top, 4)
 
-                        Text("ATMOSPHERE")
-                            .font(.auraMono(13))
-                            .tracking(3)
-                            .foregroundStyle(Color.auraPrimaryText)
-                            .padding(.horizontal, 16)
-                            .padding(.top, 26)
-                            .padding(.bottom, 14)
-                            .accessibilityAddTraits(.isHeader)
+                        sectionHeader("ATMOSPHERE")
 
                         content
                             .padding(.horizontal, 16)
-                            .padding(.bottom, 32)
+
+                        if !trends.needsMigration, trends.errorMessage == nil {
+                            sectionHeader("AREAS")
+
+                            areas
+                                .padding(.horizontal, 16)
+                        }
+
+                        Color.clear.frame(height: 32)
                     }
                 }
                 .scrollIndicators(.hidden)
@@ -56,6 +57,66 @@ struct TrendsView: View {
     /// Reloads when either the window or the anchor changes.
     private var reloadKey: String {
         "\(trends.window.rawValue)-\(anchor.timeIntervalSince1970.rounded())"
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.auraMono(13))
+            .tracking(3)
+            .foregroundStyle(Color.auraPrimaryText)
+            .padding(.horizontal, 16)
+            .padding(.top, 26)
+            .padding(.bottom, 14)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    /// One block per zone the monitor has reported from, each with CO₂ and humidity.
+    @ViewBuilder
+    private var areas: some View {
+        if trends.zonesUnavailable {
+            notice(
+                title: "Areas needs one more migration",
+                detail: "Run supabase/migrations/0005_zone_buckets.sql. It splits the same aggregates by zone, which is what lets a room be looked at on its own."
+            )
+        } else {
+            let zones = trends.zones
+
+            if zones.isEmpty {
+                notice(
+                    title: "No areas yet",
+                    detail: "Readings carry the label the monitor was set to. Press the button on the device to name where it is, and rooms will appear here."
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 20) {
+                    ForEach(zones, id: \.self) { zone in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(zone)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Color.auraPrimaryText)
+                                .accessibilityAddTraits(.isHeader)
+
+                            VStack(spacing: 10) {
+                                ForEach(MetricKind.areaMetrics) { metric in
+                                    TrendRow(
+                                        metric: metric,
+                                        window: trends.window,
+                                        slots: zip(
+                                            trends.slots(endingAt: anchor).map(\.date),
+                                            trends.values(for: metric, zone: zone, endingAt: anchor)
+                                        ).map { pair in (date: pair.0, value: pair.1) },
+                                        windowAverage: trends.average(for: metric, zone: zone, endingAt: anchor),
+                                        // Shared across zones, so one room's bars are
+                                        // comparable with another's.
+                                        observedMax: trends.zoneObservedMax(for: metric),
+                                        headline: .average
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
