@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Optional. Copy this to Aura/Resources/Config.plist to skip the setup screen on first run —
+  handy when you reinstall on the Simulator a lot.
+
+      cp ios/Config.example.plist ios/Aura/Resources/Config.plist
+
+  Aura/Resources/Config.plist is gitignored. The folder is a synchronized group, so Xcode
+  picks the file up with no project changes needed.
+
+  Only the ANON (public) key belongs here. It is designed to ship inside clients and grants
+  nothing on its own — row level security is what protects the data. Never put the service
+  role key or DEVICE_INGEST_TOKEN in the app; both would let anyone holding the binary read
+  and write the whole database.
+-->
+<plist version="1.0">
+<dict>
+	<key>SupabaseURL</key>
+	<string>YOUR_PROJECT_URL</string>
+	<key>SupabaseAnonKey</key>
+	<string>YOUR_ANON_KEY</string>
+</dict>
+</plist>

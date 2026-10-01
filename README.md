@@ -1,0 +1,199 @@
+# Aura
+
+A room monitor, end to end: an ESP32 reading CO₂, temperature, humidity and light, a Supabase
+project storing the readings, and an iOS app to look at them.
+
+```
+ESP32 + SCD40 + BH1750
+        │  HTTPS, every 60s, batched if the Wi-Fi drops
+        ▼
+Supabase edge function  ──writes with the service role key──▶  public.readings
+                                                                    │
+                                                 row level security │ owner_id = auth.uid()
+                                                                    ▼
+                                                            Aura (SwiftUI)
+                                                       REST for history,
+                                                       Realtime for live rows
+```
+
+| | |
+|---|---|
+| `ios/` | The SwiftUI app. No third-party packages — open it and build. |
+| `supabase/` | Schema, policies and the ingest function. |
+| `firmware/` | The Arduino sketch for the ESP32. |
+
+---
+
+## Before anything else: rotate your token
+
+The `DEVICE_INGEST_TOKEN` and Wi-Fi passwords that were in the original sketch have been
+replaced with placeholders here, but **the old token should be considered burned** — it was
+pasted into a chat, so treat it as public. Generate a new one and set it in both places:
+
+```bash
+openssl rand -hex 32
+```
+
+Supabase → Project Settings → Edge Functions → Secrets → `DEVICE_INGEST_TOKEN`, and
+`firmware/room-monitor/secrets.h` (which is gitignored).
+
+Anyone holding that token can write readings into your table. It is the only thing guarding
+the ingest endpoint.
+
+---
+
+## 1. Supabase
+
+**Schema.** Paste `supabase/migrations/0001_readings.sql` into the SQL editor and run it. It is
+written to be safe against the table you already have — it adds what's missing and leaves the
+rest alone. It sets up:
+
+- `public.readings` with an index for the exact shape the app queries
+- row level security, so each account reads only its own rows
+- `public.device_summary`, which backs the device picker
+- the table added to the `supabase_realtime` publication, for live updates
+- a check constraint rejecting physically impossible values, so one bad sensor read can't
+  rescale every chart
+
+**Account.** Authentication → Users → Add user. Create the account you'll sign into the app
+with, then copy its UUID.
+
+**Secrets.** Project Settings → Edge Functions → Secrets:
+
+| Name | Value |
+|---|---|
+| `DEVICE_INGEST_TOKEN` | the token you just generated |
+| `OWNER_USER_ID` | the UUID of the account above |
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected for you.
+
+**Function.** Deploy `supabase/functions/ingest-reading/`:
+
+```bash
+supabase functions deploy ingest-reading --no-verify-jwt
+```
+
+`--no-verify-jwt` is deliberate. The device has no Supabase credentials and no way to refresh
+a JWT; it authenticates with `x-device-token`, which the function checks itself using a
+timing-safe comparison.
+
+Check it end to end:
+
+```bash
+curl -i -X POST \
+  -H "Content-Type: application/json" \
+  -H "x-device-token: YOUR_TOKEN" \
+  -d '{"co2_ppm":812,"temperature_c":22.4,"humidity_percent":47,"light_lux":210}' \
+  https://YOUR_PROJECT.supabase.co/functions/v1/ingest-reading
+```
+
+`201 {"ok":true,"inserted":1}` means you're done here.
+
+---
+
+## 2. Firmware
+
+```bash
+cd firmware/room-monitor
+cp secrets.example.h secrets.h   # then fill it in
+```
+
+Libraries, via the Arduino Library Manager:
+
+- **BH1750** by Christopher Laws
+- **Sensirion I2C SCD4x** by Sensirion
+
+Board: *ESP32 Dev Module*. Wiring: SDA → GPIO21, SCL → GPIO22, both sensors on 3V3 and GND.
+
+What changed from the original sketch:
+
+- **Secrets moved out** into gitignored `secrets.h`.
+- **Offline buffering.** Readings go into a 60-slot ring buffer and upload as one batch. A
+  router reboot now costs you nothing instead of a gap in the data.
+- **NTP time.** Buffered readings carry their real timestamp rather than arriving stamped with
+  whenever the network came back.
+- **Non-blocking loop.** The original `delay(5000)` plus an early `return` meant a cycle where
+  the sensor wasn't ready would skip the upload check entirely. Sampling and uploading are now
+  on independent timers.
+- **Sensor failures are survivable.** A missing BH1750 no longer takes the light column down
+  with a `-1`; it records nothing, and the app draws a gap. CO₂ of 0 ppm during warm-up is
+  treated as "no reading" rather than as a measurement.
+- **4xx responses drop the batch** instead of retrying a payload the server will never accept.
+
+`client.setInsecure()` is still there, as in the original. It skips certificate verification,
+which is a reasonable trade on a network you control and keeps setup painless. The comment
+above it says what to do instead if you'd rather verify properly.
+
+---
+
+## 3. iOS app
+
+Open `ios/Aura.xcodeproj` in **Xcode 16 or newer** and run. Deployment target is iOS 17.
+
+On first launch the app asks for your project URL and **anon** key (Project Settings → API),
+then for the email and password of the account you created. That's it.
+
+To skip that on every reinstall:
+
+```bash
+cp ios/Config.example.plist ios/Aura/Resources/Config.plist
+```
+
+Fill it in — it's gitignored, and the app picks it up as a default.
+
+> The anon key is meant to ship inside clients; it grants nothing on its own, because row level
+> security is what actually protects the data. The service role key and the device token must
+> never go in the app — either one would let anyone who pulls apart the binary read and write
+> your whole database.
+
+### What's in it
+
+**Now.** The verdict first — a 0–100 comfort score weighted toward CO₂, because that's the
+metric that moves fastest and the one you can do something about. The background colour tracks
+it, so the screen reads before the numbers do. Then the CO₂ reading against a full-spectrum
+scale, tiles for the other three sensors with sparklines, an interactive chart over 6h / 24h /
+7d / 30d, and a range bar per metric showing low, average and peak with the current value
+floating where it falls.
+
+**History.** A calendar with a dot under every day that has readings. Pick one and you get a
+day score, a scrubbed chart, per-metric breakdowns, and a CSV export in the units you're
+viewing.
+
+**Settings.** °C/°F, a temperature calibration offset (the SCD40 sits in its own case and reads
+warm — compare against a thermometer you trust and nudge it), device picker, live updates
+toggle, and a calm-background switch.
+
+### Notes on how it's built
+
+- **No dependencies.** Auth, PostgREST and Realtime are a few hundred lines of `URLSession`.
+  Nothing to resolve, nothing to break on a Swift version bump.
+- **Live updates over Realtime**, with polling as a safety net underneath — the socket is an
+  optimisation, never a requirement, so the app is correct even if it never connects.
+- **Units convert in exactly one place.** All physics stays in SI; `DisplayScale` is the only
+  type that knows how a stored value becomes something on screen. Switching to Fahrenheit moves
+  the chart axis, the band thresholds, the comfort shading and the CSV together.
+- **Opens with data.** The last readings are cached to disk, so the first frame is never a
+  spinner.
+- **Gaps stay gaps.** A failed sensor decodes to `nil` and draws as a break in the line. Nothing
+  is ever silently zero-filled.
+
+---
+
+## Troubleshooting
+
+**App signs in but shows no readings.** The signed-in account must be the one whose UUID is in
+`OWNER_USER_ID` — RLS filters on `owner_id`, so a different account correctly sees an empty
+table. Check with `select owner_id, count(*) from readings group by 1;`.
+
+**"Live" never turns on.** Realtime needs the table in the publication; the migration does that,
+but if you created the table afterwards, re-run that block. The app polls regardless, so this
+costs freshness, not data.
+
+**Device uploads 401.** The token in `secrets.h` doesn't match `DEVICE_INGEST_TOKEN`. Note that
+the function reads the secret at request time — no redeploy needed after changing it.
+
+**Device uploads 400.** The payload had no usable values, or a reading was outside the plausible
+range in the check constraint. The serial log prints the response body.
+
+**Temperature reads 1–2 °C high.** Expected — the SCD40 self-heats inside an enclosure. Settings
+→ Temperature offset.

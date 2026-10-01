@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# Secrets — never commit these
+# ---------------------------------------------------------------------------
+
+# Wi-Fi passwords and the device ingest token.
+firmware/**/secrets.h
+
+# Supabase URL + anon key baked in for the Simulator.
+ios/Aura/Resources/Config.plist
+
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Xcode
+# ---------------------------------------------------------------------------
+
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+Package.resolved
+
+# ---------------------------------------------------------------------------
+# Supabase CLI
+# ---------------------------------------------------------------------------
+
+supabase/.branches/
+supabase/.temp/
+
+# ---------------------------------------------------------------------------
+# macOS / editors
+# ---------------------------------------------------------------------------
+
+.DS_Store
+*.swp
+.idea/
+.vscode/
