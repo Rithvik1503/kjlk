@@ -17,7 +17,9 @@ struct TrendsView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                // The same backdrop Home carries, on the same tint, so switching tabs doesn't
+                // change the room's colour underfoot.
+                AuraBackground(tint: store.tint)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
