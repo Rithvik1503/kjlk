@@ -199,10 +199,66 @@ actor SupabaseClient {
         return rows.map(\.deviceID)
     }
 
+    /// Mean temperature over `start..<end`, averaged by Postgres rather than on the phone.
+    ///
+    /// Returns nil when there is nothing in the window, and also when the project hasn't run
+    /// migration 0002 — the comparison this feeds is a nicety, so a missing function degrades
+    /// to "no baseline" rather than an error the user has to read.
+    func averageTemperature(from start: Date, to end: Date, deviceID: String?) async -> Double? {
+        var body: [String: String] = [
+            "p_from": PostgresDate.string(from: start),
+            "p_to": PostgresDate.string(from: end),
+        ]
+        if let deviceID, !deviceID.isEmpty {
+            body["p_device"] = deviceID
+        }
+
+        guard let data = try? await restPost(function: "aura_average_temperature", body: body) else {
+            return nil
+        }
+        return Self.scalarDouble(from: data)
+    }
+
+    /// PostgREST renders a scalar-returning function differently depending on version and
+    /// Accept header: a bare number, a one-element array, or an array of one-key objects.
+    private static func scalarDouble(from data: Data) -> Double? {
+        if let value = try? JSONDecoder().decode(Double.self, from: data) {
+            return value.isFinite ? value : nil
+        }
+        if let values = try? JSONDecoder().decode([Double].self, from: data) {
+            return values.first.flatMap { $0.isFinite ? $0 : nil }
+        }
+        if let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+           let first = rows.first?.values.first {
+            return (first as? NSNumber)?.doubleValue
+        }
+        return nil
+    }
+
     private static let readingColumns =
         "id,device_id,recorded_at,co2_ppm,temperature_c,humidity_percent,light_lux"
 
     // MARK: - Request plumbing
+
+    private func restPost(function: String, body: [String: String]) async throws -> Data {
+        guard let config else { throw SupabaseError.notConfigured }
+        let token = try await validToken()
+
+        let url = config.restURL
+            .appendingPathComponent("rpc")
+            .appendingPathComponent(function)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try? JSONEncoder().encode(body)
+        request.timeoutInterval = 20
+
+        return try await send(request)
+    }
 
     private func restGet<T: Decodable>(table: String, query: [URLQueryItem]) async throws -> T {
         guard let config else { throw SupabaseError.notConfigured }

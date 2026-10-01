@@ -55,6 +55,11 @@ rest alone. It sets up:
 - a check constraint rejecting physically impossible values, so one bad sensor read can't
   rescale every chart
 
+`0002_thermal_baseline.sql` is optional. It adds a function that averages temperature over a
+window in Postgres, which the thermal card uses for its "than usual" comparison — a week of
+minute-resolution readings is around ten thousand rows and the app only needs one number from
+them. Without it the card describes the day on its own terms instead, so nothing breaks.
+
 **Account.** Authentication → Users → Add user. Create the account you'll sign into the app
 with, then copy its UUID.
 
@@ -148,18 +153,20 @@ Fill it in — it's gitignored, and the app picks it up as a default.
 
 ### What's in it
 
-One screen — **Home** — behind a system tab bar, showing four cards: CO₂, temperature,
-humidity and light. Temperature and humidity come from the SCD40, light from the BH1750.
+One screen — **Home** — behind a system tab bar.
 
-Every card is the same shape — the number, its unit, and a 96 × 6 dot-matrix level indicator.
-Each lit column takes the band colour at *its own* position on that metric's scale, so the lit
-run is a slice of the scale's ramp rather than a flat block, and the lit cells bloom so the
-grid reads as an emissive panel. That is what says whether a number is good, which is why no
-card carries a verdict in words. The background glow follows the CO₂ band.
+Three cards at the top: CO₂, humidity and light. Each is the number, its unit, and a 96 × 6
+dot-matrix level indicator. Each lit column takes the band colour at *its own* position on that
+metric's scale, so the lit run is a slice of the scale's ramp rather than a flat block, and the
+lit cells bloom so the grid reads as an emissive panel. That is what says whether a number is
+good, which is why no card carries a verdict in words. The background glow follows the CO₂ band.
 
 The matrix is drawn in a `Canvas`, in two passes — bloom, then sharp cells on top. As a grid of
-`Shape` views it would be 576 views per card, each with its own shadow, and four cards means a
-few thousand.
+`Shape` views it would be 576 views per card.
+
+Below them, a **Thermal reading** section: the temperature as a large light figure, with the
+day's average beside it and how that compares with the week before — "Hotter than usual",
+"Colder than usual", "About usual".
 
 The navigation bar holds a settings button on the left, and on the right a day stepper
 (‹ ›) with a date button between them that opens a graphical `DatePicker` in a popover.

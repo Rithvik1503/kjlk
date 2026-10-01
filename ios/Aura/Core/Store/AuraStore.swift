@@ -21,6 +21,8 @@ final class AuraStore: ObservableObject {
     @Published private(set) var readings: [Reading] = []
     @Published private(set) var errorMessage: String?
     @Published private(set) var devices: [String] = []
+    /// Mean temperature over the week before the selected day, or nil if unavailable.
+    @Published private(set) var temperatureBaseline: Double?
     @Published var accountEmail: String?
 
     /// The day being shown. Views reload by keying a `.task` on this.
@@ -84,10 +86,32 @@ final class AuraStore: ObservableObject {
         return readings.reversed().lazy.compactMap { $0.value(for: metric) }.first
     }
 
+    /// Mean across the whole selected day, regardless of which day is being viewed.
+    func dayAverage(of metric: MetricKind) -> Double? {
+        average(of: metric)
+    }
+
     private func average(of metric: MetricKind) -> Double? {
         let values = readings.compactMap { $0.value(for: metric) }
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
+    }
+
+    /// How the selected day's temperature compares with the week before it.
+    ///
+    /// Falls back to describing the day on its own terms when there is no baseline — either
+    /// too little history, or the project hasn't run the optional migration that adds the
+    /// averaging function.
+    var thermalComparison: String {
+        guard let today = dayAverage(of: .temperature) else { return "No readings" }
+
+        guard let baseline = temperatureBaseline else {
+            return MetricKind.temperature.label(for: today)
+        }
+
+        let delta = today - baseline
+        if abs(delta) < 0.5 { return "About usual" }
+        return delta > 0 ? "Hotter than usual" : "Colder than usual"
     }
 
     /// Backdrop colour, driven by CO₂ — the metric that moves fastest and the one you can
@@ -191,6 +215,7 @@ final class AuraStore: ObservableObject {
                 cache.save(readings: fetched, deviceID: preferences.selectedDeviceID)
             }
             await refreshDeviceList()
+            await loadTemperatureBaseline(before: start)
         } catch is CancellationError {
             return
         } catch let error as SupabaseError {
@@ -204,6 +229,19 @@ final class AuraStore: ObservableObject {
             guard !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Averages the seven days before the one on screen, for the "than usual" comparison.
+    private func loadTemperatureBaseline(before dayStart: Date) async {
+        guard let weekEarlier = calendar.date(byAdding: .day, value: -7, to: dayStart) else { return }
+
+        let baseline = await client.averageTemperature(
+            from: weekEarlier,
+            to: dayStart,
+            deviceID: preferences.selectedDeviceID
+        )
+        guard !Task.isCancelled else { return }
+        temperatureBaseline = baseline
     }
 
     private func refreshDeviceList() async {

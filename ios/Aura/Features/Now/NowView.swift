@@ -18,9 +18,12 @@ struct NowView: View {
 
                 ScrollView {
                     VStack(spacing: 14) {
-                        ForEach(MetricKind.allCases) { metric in
+                        // Temperature is not here — it gets its own section below.
+                        ForEach([MetricKind.co2, .humidity, .light]) { metric in
                             MetricCard(metric: metric, value: store.value(for: metric))
                         }
+
+                        thermalSection
 
                         if let message = store.errorMessage {
                             errorRow(message)
@@ -39,6 +42,23 @@ struct NowView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView().environmentObject(store)
         }
+    }
+
+    private var thermalSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Thermal reading")
+                .font(.headline)
+                .foregroundStyle(Color.auraPrimaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+
+            ThermalCard(
+                temperature: store.value(for: .temperature),
+                dayAverage: store.dayAverage(of: .temperature),
+                comparison: store.thermalComparison
+            )
+        }
+        .padding(.top, 10)
     }
 
     // MARK: - Toolbar
