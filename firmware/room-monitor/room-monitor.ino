@@ -5,9 +5,17 @@
 // into a ring buffer and get flushed as one batch when the connection comes back, so a
 // router reboot leaves a gap of nothing rather than a gap in the data.
 //
+// It also publishes itself to Apple HomeKit over the local network, so the room appears in
+// the Home app and in Siri with no cloud in the path. Set ENABLE_HOMEKIT to 0 to leave that
+// out entirely.
+//
 // Libraries (Arduino Library Manager):
 //   - BH1750                by Christopher Laws
 //   - Sensirion I2C SCD4x   by Sensirion
+//   - HomeSpan              by Gregg Berman   (only when ENABLE_HOMEKIT is 1)
+//
+// With HomeKit on, the sketch no longer fits the default partition table. Tools ->
+// Partition Scheme -> "Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)".
 //
 // Wiring (I2C, both sensors share the bus):
 //   SDA -> GPIO21, SCL -> GPIO22, VIN -> 3V3, GND -> GND
@@ -24,6 +32,31 @@
 #include <SensirionI2cScd4x.h>
 
 #include "secrets.h"
+
+// ---------------------------------------------------------------------------
+// HomeKit
+// ---------------------------------------------------------------------------
+//
+// 0 removes HomeSpan from the build entirely — no library needed, no flash cost, and the
+// default partition table is enough again.
+#define ENABLE_HOMEKIT 1
+
+#if ENABLE_HOMEKIT
+#include <HomeSpan.h>
+
+// The code typed into the Home app when pairing. Apple rejects trivial ones (all the same
+// digit, or 1234-5678), and this is the HomeSpan default — change it if the board lives
+// anywhere other people can reach.
+static const char* HOMEKIT_PAIRING_CODE = "46637726";
+
+// HomeSpan can take a button for factory-resetting its pairing. GPIO 21 and 22 are the I2C
+// bus and GPIO 0 cycles zones, so it gets a pin of its own.
+#define HOMEKIT_CONTROL_PIN 4
+
+// HomeKit's own idea of "CO2 abnormal", which is what an automation triggers on. 1200 ppm is
+// where the app's scale turns orange.
+static const float HOMEKIT_CO2_ALERT_PPM = 1200.0f;
+#endif
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -89,6 +122,99 @@ static const size_t MAX_UPLOAD_BATCH = 100;
 
 static const int KNOWN_WIFI_COUNT = sizeof(KNOWN_WIFIS) / sizeof(KNOWN_WIFIS[0]);
 
+#if ENABLE_HOMEKIT
+// ---------------------------------------------------------------------------
+// HomeKit services
+// ---------------------------------------------------------------------------
+//
+// Four sensors on one accessory, so the Home app shows the room as one tile that opens into
+// the four readings. Values are pushed only when they have moved enough to be worth an event
+// — every sample would put a notification on the network every five seconds for a number
+// that changed in its second decimal place.
+
+struct CO2Service : Service::CarbonDioxideSensor {
+  SpanCharacteristic* detected;
+  SpanCharacteristic* level;
+  SpanCharacteristic* peak;
+
+  CO2Service() : Service::CarbonDioxideSensor() {
+    detected = new Characteristic::CarbonDioxideDetected(0);
+    level = new Characteristic::CarbonDioxideLevel(400);
+    peak = new Characteristic::CarbonDioxidePeakLevel(400);
+    new Characteristic::Name("Carbon Dioxide");
+  }
+
+  void report(float ppm) {
+    if (fabsf(level->getVal<float>() - ppm) >= 10.0f) {
+      level->setVal(ppm);
+    }
+    if (ppm > peak->getVal<float>()) {
+      peak->setVal(ppm);
+    }
+    // 0 is "normal", 1 is "abnormal" — the state an automation watches.
+    uint8_t state = (ppm >= HOMEKIT_CO2_ALERT_PPM) ? 1 : 0;
+    if (detected->getVal<uint8_t>() != state) {
+      detected->setVal(state);
+    }
+  }
+};
+
+struct TemperatureService : Service::TemperatureSensor {
+  SpanCharacteristic* current;
+
+  TemperatureService() : Service::TemperatureSensor() {
+    current = new Characteristic::CurrentTemperature(20.0);
+    new Characteristic::Name("Temperature");
+  }
+
+  void report(float celsius) {
+    if (fabsf(current->getVal<float>() - celsius) >= 0.1f) {
+      current->setVal(celsius);
+    }
+  }
+};
+
+struct HumidityService : Service::HumiditySensor {
+  SpanCharacteristic* current;
+
+  HumidityService() : Service::HumiditySensor() {
+    current = new Characteristic::CurrentRelativeHumidity(50.0);
+    new Characteristic::Name("Humidity");
+  }
+
+  void report(float percent) {
+    if (fabsf(current->getVal<float>() - percent) >= 0.5f) {
+      current->setVal(percent);
+    }
+  }
+};
+
+struct LightService : Service::LightSensor {
+  SpanCharacteristic* current;
+
+  LightService() : Service::LightSensor() {
+    current = new Characteristic::CurrentAmbientLightLevel(10.0);
+    new Characteristic::Name("Light");
+  }
+
+  void report(float lux) {
+    // HomeKit's floor is 0.0001 lux; a true zero is out of range and would be rejected.
+    float value = fmaxf(lux, 0.0001f);
+    float previous = current->getVal<float>();
+    // Relative rather than absolute: a 5 lux move is nothing at noon and everything at night.
+    if (fabsf(previous - value) >= fmaxf(previous * 0.1f, 1.0f)) {
+      current->setVal(value);
+    }
+  }
+};
+
+static CO2Service* hkCO2 = nullptr;
+static TemperatureService* hkTemperature = nullptr;
+static HumidityService* hkHumidity = nullptr;
+static LightService* hkLight = nullptr;
+static bool homeKitReady = false;
+#endif
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -113,6 +239,9 @@ static size_t bufferCount = 0;
 static unsigned long lastSample = 0;
 static unsigned long lastUpload = 0;
 static unsigned long lastWiFiAttempt = 0;
+
+// Which of KNOWN_WIFIS answered, so HomeSpan can be handed the same one.
+static const KnownWiFi* activeNetwork = nullptr;
 
 static bool clockReady = false;
 static bool lightSensorReady = false;
@@ -247,6 +376,7 @@ static bool connectToWiFi() {
       if (WiFi.status() == WL_CONNECTED) {
         Serial.print("\nConnected. IP address: ");
         Serial.println(WiFi.localIP());
+        activeNetwork = &KNOWN_WIFIS[network];
         return true;
       }
       delay(500);
@@ -278,6 +408,60 @@ static void syncClock() {
   }
   Serial.println("Couldn't reach an NTP server; the server will timestamp instead.");
 }
+
+#if ENABLE_HOMEKIT
+// ---------------------------------------------------------------------------
+// HomeKit startup
+// ---------------------------------------------------------------------------
+
+/// Brings the accessory up once, after Wi-Fi is connected.
+///
+/// HomeSpan would happily manage Wi-Fi itself, but this sketch already walks a list of
+/// networks and that is the better behaviour of the two. It is handed the credentials that
+/// actually worked, so if it ever reconnects on its own it reaches for the right one.
+static void startHomeKit() {
+  if (homeKitReady || WiFi.status() != WL_CONNECTED) return;
+
+  if (activeNetwork != nullptr) {
+    homeSpan.setWifiCredentials(activeNetwork->name, activeNetwork->password);
+  }
+  homeSpan.setPairingCode(HOMEKIT_PAIRING_CODE);
+  homeSpan.setControlPin(HOMEKIT_CONTROL_PIN);
+  // No setStatusPin call: the built-in LED is already spoken for by the zone blink, and
+  // HomeSpan leaves the status LED off unless it is given a pin.
+  homeSpan.setLogLevel(0);
+
+  homeSpan.begin(Category::Sensors, "Aura Room Monitor", "Aura");
+
+  new SpanAccessory();
+    new Service::AccessoryInformation();
+      new Characteristic::Identify();
+      new Characteristic::Name("Aura");
+      new Characteristic::Manufacturer("Aura");
+      new Characteristic::Model("ESP32 + SCD40 + BH1750");
+      new Characteristic::SerialNumber(DEVICE_ID);
+      new Characteristic::FirmwareRevision("1.1.0");
+
+    hkCO2 = new CO2Service();
+    hkTemperature = new TemperatureService();
+    hkHumidity = new HumidityService();
+    hkLight = new LightService();
+
+  homeKitReady = true;
+  Serial.print("HomeKit ready. Pair with code ");
+  Serial.println(HOMEKIT_PAIRING_CODE);
+}
+
+/// Hands a fresh sample to HomeKit. Each service decides whether it moved enough to publish.
+static void publishToHomeKit(const BufferedReading& reading) {
+  if (!homeKitReady) return;
+
+  if (reading.co2 >= 0) hkCO2->report((float)reading.co2);
+  if (!isnan(reading.temperature)) hkTemperature->report(reading.temperature);
+  if (!isnan(reading.humidity)) hkHumidity->report(reading.humidity);
+  if (!isnan(reading.light)) hkLight->report(reading.light);
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Upload
@@ -428,6 +612,10 @@ static void takeSample() {
 
   bufferPush(reading);
 
+#if ENABLE_HOMEKIT
+  publishToHomeKit(reading);
+#endif
+
   Serial.println("----------");
   Serial.printf("CO2:         %s ppm\n", reading.co2 >= 0 ? String(reading.co2).c_str() : "warming up");
   Serial.printf("Temperature: %.1f C\n", reading.temperature);
@@ -485,6 +673,10 @@ void setup() {
   connectToWiFi();
   syncClock();
 
+#if ENABLE_HOMEKIT
+  startHomeKit();
+#endif
+
   // Upload the first reading as soon as there is one, instead of waiting a full minute.
   lastUpload = millis() - UPLOAD_INTERVAL_MS;
   lastSample = millis() - SAMPLE_INTERVAL_MS;
@@ -493,6 +685,16 @@ void setup() {
 }
 
 void loop() {
+#if ENABLE_HOMEKIT
+  // Cheap when there is nothing to do, and it has to run often — this is what answers the
+  // Home app. If Wi-Fi was down at boot, this is also where HomeKit finally comes up.
+  if (homeKitReady) {
+    homeSpan.poll();
+  } else if (WiFi.status() == WL_CONNECTED) {
+    startHomeKit();
+  }
+#endif
+
   pollButton();
 
   // Unsigned subtraction, so this keeps working after millis() wraps at ~49 days.
@@ -513,5 +715,7 @@ void loop() {
     }
   }
 
-  delay(50);
+  // Short, because homeSpan.poll() above is what serves the Home app and a sleepy loop shows
+  // up there as an accessory that takes a second to answer.
+  delay(5);
 }

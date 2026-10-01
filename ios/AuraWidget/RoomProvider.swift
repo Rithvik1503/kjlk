@@ -6,7 +6,8 @@ struct RoomEntry: TimelineEntry {
     let snapshot: RoomSnapshot
 }
 
-/// Fetches the room's current state straight from Supabase.
+/// Fetches the room's current state straight from Supabase, through `RoomReader` — the same
+/// path the Siri intents take.
 ///
 /// The widget holds nothing of its own: credentials come from the shared keychain the app
 /// writes, and the numbers come down the wire each time the system asks for a timeline. That
@@ -27,56 +28,15 @@ struct RoomProvider: TimelineProvider {
             return completion(RoomEntry(date: Date(), snapshot: .preview))
         }
         Task {
-            completion(RoomEntry(date: Date(), snapshot: await load()))
+            completion(RoomEntry(date: Date(), snapshot: await RoomReader.current()))
         }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<RoomEntry>) -> Void) {
         Task {
             let now = Date()
-            let entry = RoomEntry(date: now, snapshot: await load())
-            let next = now.addingTimeInterval(Self.refreshInterval)
-            completion(Timeline(entries: [entry], policy: .after(next)))
-        }
-    }
-
-    private func load() async -> RoomSnapshot {
-        let client = SupabaseClient()
-        await client.restore()
-
-        guard await client.isConfigured else {
-            return RoomSnapshot(notice: "Open Aura to connect your project.")
-        }
-        guard await client.isSignedIn else {
-            return RoomSnapshot(notice: "Open Aura to sign in.")
-        }
-
-        let deviceID = Keychain.string(for: SharedKeys.selectedDevice)
-        let now = Date()
-
-        do {
-            // A window rather than the single newest row: one sensor dropping out of one
-            // sample shouldn't take its figure down with it.
-            let readings = try await client.readings(
-                from: now.addingTimeInterval(-2 * 60 * 60),
-                to: now,
-                deviceID: deviceID,
-                limit: 240
-            )
-
-            guard !readings.isEmpty else {
-                // Nothing in two hours — fall back to whatever the monitor last sent, so the
-                // widget shows the room as it was rather than going blank.
-                guard let last = try await client.latestReading(deviceID: deviceID) else {
-                    return RoomSnapshot(notice: "No readings yet.")
-                }
-                return .resolved(from: [last])
-            }
-            return .resolved(from: readings)
-        } catch SupabaseError.notSignedIn {
-            return RoomSnapshot(notice: "Open Aura to sign in again.")
-        } catch {
-            return RoomSnapshot(notice: "Couldn't reach Supabase.")
+            let entry = RoomEntry(date: now, snapshot: await RoomReader.current())
+            completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(Self.refreshInterval))))
         }
     }
 }

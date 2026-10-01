@@ -100,7 +100,7 @@ struct SettingsView: View {
             if store.notifier.authorization == .denied {
                 Text("Notifications are turned off for Aura in iOS Settings.")
             } else {
-                Text("Alerts when a sensor crosses into a worse band than it was in an hour ago — not for every wobble. Delivered while Aura is running, or during a background refresh if that's enabled.")
+                Text("Alerts when a sensor crosses into a worse band than it was in an hour ago — not for every wobble. Delivered by the server, so they arrive with Aura closed.")
             }
         }
     }
@@ -117,6 +117,9 @@ struct SettingsView: View {
                 Task {
                     let granted = await store.notifier.requestAuthorization()
                     store.preferences.notificationsEnabled = granted
+                    // Asking APNs for a token before permission is granted gets one that
+                    // can't show anything.
+                    if granted { store.push.start() }
                 }
             }
         )

@@ -278,6 +278,58 @@ actor SupabaseClient {
         }
     }
 
+    // MARK: - Push devices
+
+    /// Tells the server where to reach this installation.
+    ///
+    /// Upserted rather than inserted: the token survives relaunches and only changes on a
+    /// reinstall or a restore onto a new phone, so this runs on every launch and is almost
+    /// always a no-op write.
+    func registerPushDevice(token: String, environment: String) async throws {
+        guard let config else { throw SupabaseError.notConfigured }
+        guard let session else { throw SupabaseError.notSignedIn }
+        let accessToken = try await validToken()
+
+        var request = URLRequest(url: config.restURL.appendingPathComponent("push_devices"))
+        request.httpMethod = "POST"
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = try? JSONEncoder().encode([
+            "token": token,
+            "owner_id": session.userID,
+            "environment": environment,
+        ])
+        request.timeoutInterval = 20
+
+        _ = try await send(request)
+    }
+
+    /// Drops this installation's token, so a signed-out phone stops being alerted.
+    func removePushDevice(token: String) async throws {
+        guard let config else { throw SupabaseError.notConfigured }
+        let accessToken = try await validToken()
+
+        var components = URLComponents(
+            url: config.restURL.appendingPathComponent("push_devices"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "token", value: "eq.\(token)")]
+
+        guard let url = components?.url else {
+            throw SupabaseError.transport("Couldn't build the request URL.")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(config.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 20
+
+        _ = try await send(request)
+    }
+
     private static let readingColumns =
         "id,device_id,zone,recorded_at,co2_ppm,temperature_c,humidity_percent,light_lux"
 

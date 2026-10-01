@@ -4,8 +4,8 @@ A room monitor, end to end: an ESP32 reading CO₂, temperature, humidity and li
 project storing the readings, and an iOS app to look at them.
 
 ```
-ESP32 + SCD40 + BH1750
-        │  HTTPS, every 60s, batched if the Wi-Fi drops
+ESP32 + SCD40 + BH1750 ──HomeKit, over the local network──▶  Apple Home, Siri, automations
+        │  HTTPS, every 15s, batched if the Wi-Fi drops
         ▼
 Supabase edge function  ──writes with the service role key──▶  public.readings
                                                                     │
@@ -13,7 +13,10 @@ Supabase edge function  ──writes with the service role key──▶  public.
                                                                     ▼
                                                             Aura (SwiftUI)
                                                        REST for history,
-                                                       Realtime for live rows
+                                                       Realtime for live rows,
+                                                       widget + Siri intents
+                                                                    ▲
+                                            pg_cron -> push-alerts -> APNs
 ```
 
 | | |
@@ -63,6 +66,10 @@ so and tells you which file to run.
 `0005_zone_buckets.sql` is required by the Trends tab's Areas section, which splits the same
 aggregates by zone. Without it that one section says so and the rest of the screen is fine.
 
+`0006_push.sql` and `0007_push_cron.sql` are required by push notifications — the ones that
+arrive with the app closed. Run `0006` with the rest; run `0007` *after* deploying the
+`push-alerts` function, and fill in the two values at the top of it first.
+
 `0004_zone.sql` is required by the zone button. Run it *before* deploying the updated function
 or flashing — the column is nullable, so a device that doesn't send a zone keeps working either
 side of the change.
@@ -89,6 +96,28 @@ supabase functions deploy ingest-reading --no-verify-jwt
 a JWT; it authenticates with `x-device-token`, which the function checks itself using a
 timing-safe comparison.
 
+**The alerting function.** Deploy `supabase/functions/push-alerts/` too, if you want
+notifications with the app closed:
+
+```bash
+supabase functions deploy push-alerts
+```
+
+No `--no-verify-jwt` here, unlike the ingest function: this one is called by your own database
+holding the service role key, so it should reject anything without a valid Supabase JWT. It
+needs four more secrets, from an APNs key you create at
+[developer.apple.com](https://developer.apple.com/account/resources/authkeys/list) → Keys →
+**+** → Apple Push Notifications service:
+
+| Name | Value |
+|---|---|
+| `APNS_KEY_ID` | the key's 10-character ID |
+| `APNS_TEAM_ID` | your Apple Developer team ID |
+| `APNS_PRIVATE_KEY` | the whole `.p8` file, `-----BEGIN PRIVATE KEY-----` and all |
+| `APNS_TOPIC` | the app's bundle identifier (`com.aura.roommonitor` unless you changed it) |
+
+Apple lets you download a `.p8` once. Keep it somewhere you'll find it again.
+
 Check it end to end:
 
 ```bash
@@ -114,8 +143,13 @@ Libraries, via the Arduino Library Manager:
 
 - **BH1750** by Christopher Laws
 - **Sensirion I2C SCD4x** by Sensirion
+- **HomeSpan** by Gregg Berman — only if you want HomeKit; set `ENABLE_HOMEKIT` to 0 and you
+  don't need it at all
 
 Board: *ESP32 Dev Module*. Wiring: SDA → GPIO21, SCL → GPIO22, both sensors on 3V3 and GND.
+
+With HomeKit on, the sketch outgrows the default partition table. **Tools → Partition Scheme →
+"Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)"**, or it won't link.
 
 What changed from the original sketch:
 
@@ -137,6 +171,30 @@ What changed from the original sketch:
   readable with nothing wired up. It defaults to GPIO 0, the BOOT button on most DevKits, so it
   needs no hardware at all. The choice survives a power cut, and a press pushes the next reading
   up immediately rather than waiting for the interval.
+
+### HomeKit
+
+The monitor publishes itself to Apple HomeKit over your local network — no cloud, no account,
+nothing leaving the house. One accessory with four services: a CO₂ sensor, a temperature
+sensor, a humidity sensor and a light sensor, all first-class HomeKit types.
+
+To pair: Home app → **+** → Add Accessory → *More options…* → the monitor appears as **Aura
+Room Monitor** → enter **466-37-726**. Change `HOMEKIT_PAIRING_CODE` in the sketch if the board
+lives anywhere other people can reach.
+
+What that gets you beyond the app: Siri on every device in the house ("what's the CO₂ in the
+bedroom"), the readings on a HomePod or Apple TV, and automations — *if carbon dioxide is
+detected, turn on the fan*. HomeKit's CO₂ "detected" state flips at 1,200 ppm, which is where
+the app's scale turns orange; `HOMEKIT_CO2_ALERT_PPM` moves it.
+
+Readings are published only when they move enough to matter — 10 ppm, 0.1 °C, 0.5 %, or 10 %
+for light — because every sample would put an event on the network every five seconds for a
+number that changed in its second decimal place.
+
+Wi-Fi stays under the sketch's control rather than HomeSpan's, so the list of networks in
+`secrets.h` still works; HomeSpan is handed whichever one answered. HomeKit comes up after
+Wi-Fi does, and if the network is down at boot it comes up later, in the loop. GPIO 4 is
+reserved for HomeSpan's pairing-reset button — nothing needs to be wired to it.
 
 `client.setInsecure()` is still there, as in the original. It skips certificate verification,
 which is a reasonable trade on a network you control and keeps setup painless. The comment
@@ -199,15 +257,41 @@ Settings is a sheet: monitor picker, notifications, account, sign out, disconnec
 
 ### Notifications
 
-Opt in from Settings. Aura posts a local notification when a sensor crosses into a *worse band*
-than it was in an hour ago — band crossings, not raw movement, because 620 → 780 ppm is a rise
-but still fresh air. Each metric then stays quiet for an hour, so a value hovering on a
-threshold can't buzz the phone on every refresh.
+Opt in from Settings. Aura alerts when a sensor crosses into a *worse band* than it was in an
+hour ago — band crossings, not raw movement, because 620 → 780 ppm is a rise but still fresh
+air. Each metric then stays quiet for an hour, so a value hovering on a threshold can't buzz
+the phone repeatedly.
 
-These are local notifications, evaluated when the app loads data. That covers the foreground.
-To have them fire while Aura isn't open, turn on **Signing & Capabilities → Background Modes
-→ Background fetch** in Xcode. Alerting after hours of the app not running at all would need
-push from the server, which this doesn't do.
+There are two paths, and they do the same thing from different places:
+
+- **Local**, evaluated in the app whenever it loads data. Immediate, no server involved, but
+  it can only fire while the app is running.
+- **Push**, evaluated in Postgres every 15 minutes by `push-alerts` and delivered through
+  APNs. This is the one that reaches you with the app closed, which is when it matters.
+
+Turning the toggle on registers the phone with APNs and writes the token to `push_devices`.
+Signing out deletes it, and Apple's own "this token is dead" response prunes it server-side.
+The band thresholds are duplicated in `supabase/functions/push-alerts/bands.ts`; if you move
+one in `MetricKind`, move it there too — a comment in both files says so.
+
+A development build's token only works against Apple's sandbox host and a TestFlight build's
+only against production, so the environment is stored alongside each token and the function
+picks the host from it. That is the usual reason a push works in one build and not the other.
+
+### Siri and Shortcuts
+
+Two App Intents, offered to Siri without any setup:
+
+- *"How's the air in Aura"* — every sensor at once.
+- *"What's the CO₂ in Aura"* — one sensor, where the sensor is a spoken parameter, so
+  "humidity", "temperature", "brightness" and a few synonyms each resolve.
+
+Neither opens the app. They read the same keychain the widget does, fetch from Supabase, speak
+the answer and show a snippet carrying the dot grid — a number read aloud says what it is, and
+the grid says whether that's good, which is the part speech is bad at.
+
+Both appear in the Shortcuts app as building blocks, so they can be dropped into automations
+of your own.
 
 ### Trends
 
@@ -253,10 +337,10 @@ shared with it:
   naming the same group, and `Keychain` pins its service to a literal rather than the bundle
   identifier, which differs between them.
 
-**One thing to do in Xcode:** select each target → Signing & Capabilities → set your team. The
-entitlement files are already in `ios/Entitlements/`, so Keychain Sharing comes with them; if
-Xcode complains about the group, add the Keychain Sharing capability on both targets and the
-group `com.aura.roommonitor`.
+**What to do in Xcode:** select each target → Signing & Capabilities → set your team. The
+entitlement files are already in `ios/Entitlements/`, so Keychain Sharing and Push
+Notifications come with them; if Xcode complains, add those capabilities by hand — Keychain
+Sharing on both targets with the group `com.aura.roommonitor`, Push Notifications on the app.
 
 The widget stores nothing. Each timeline refresh fetches from Supabase, the same promise the app
 makes, and refreshes on its own about every 15 minutes — WidgetKit budgets an extension to a few
@@ -308,6 +392,16 @@ one with `openssl rand -hex 32`, set it as `DEVICE_INGEST_TOKEN`, put the same v
 
 **Device uploads 400.** The payload had no usable values, or a reading was outside the plausible
 range in the check constraint. The serial log prints the response body.
+
+**No push notifications.** In order: is the toggle on in Settings, is there a row in
+`push_devices`, is the cron job running (`select * from cron.job_run_details order by
+start_time desc limit 5;`), and what did the function say (`select * from net._http_response
+order by created desc limit 5;`). A `BadDeviceToken` in the function logs means the build's
+environment and the stored one disagree — see the note about sandbox and production above.
+
+**HomeKit accessory never appears.** It is published only after Wi-Fi connects, so check the
+serial log for "HomeKit ready". If the sketch won't link at all, it's the partition scheme.
+To pair it to a second home, or after a failed pairing, hold the button on GPIO 4.
 
 **Temperature reads 1–2 °C high.** Expected — the SCD40 self-heats inside an enclosure. Settings
 → Temperature offset.

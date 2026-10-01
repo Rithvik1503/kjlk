@@ -34,6 +34,9 @@ final class AuraStore: ObservableObject {
     let preferences: Preferences
 
     let notifier = AirQualityNotifier()
+    /// Registers this installation for the alerts that arrive with the app closed. Owned
+    /// here because it needs the same client, and the same moment of signing in.
+    private(set) lazy var push: PushRegistrar = PushRegistrar(client: client)
 
     private let client: SupabaseClient
     private let realtime: RealtimeChannel
@@ -338,12 +341,17 @@ final class AuraStore: ObservableObject {
 
     private func enterReadyState() async {
         phase = .ready
+        // A token can arrive before there is an account to attach it to; this is that moment.
+        await push.retryPendingUpload()
         await loadSelectedDay()
         startLiveUpdates()
         startPolling()
     }
 
     func signOut() async {
+        // Before the session goes, while the request can still be authorised.
+        await push.forget()
+
         stopLiveUpdates()
         stopPolling()
         loadTask?.cancel()
