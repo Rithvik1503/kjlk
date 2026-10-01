@@ -20,7 +20,9 @@ struct ThermalCard: View {
             Spacer(minLength: 12)
 
             Text(averageText)
-                .font(.subheadline.weight(.medium))
+                // Regular rather than medium: the figure beside it is thin, and a heavier
+                // label next to it reads as the louder of the two.
+                .font(.subheadline.weight(.regular))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
                 // Sits against the lower half of the figure rather than its cap height, so
