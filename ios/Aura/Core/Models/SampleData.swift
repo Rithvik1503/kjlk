@@ -3,24 +3,6 @@ import Foundation
 /// Plausible fake data for SwiftUI previews, so every component can be worked on without a
 /// device or a network. Never referenced from a code path the shipping app takes.
 extension Reading {
-    static func sample(
-        minutesAgo: Int = 2,
-        co2: Double = 712,
-        temperature: Double = 22.4,
-        humidity: Double = 47,
-        light: Double = 284
-    ) -> Reading {
-        Reading(
-            id: Int64(100_000 - minutesAgo),
-            deviceID: "esp32-room-1",
-            recordedAt: Date().addingTimeInterval(-Double(minutesAgo) * 60),
-            co2: co2,
-            temperature: temperature,
-            humidity: humidity,
-            light: light
-        )
-    }
-
     /// A day of readings shaped like a real room: CO₂ climbing while it's occupied, light
     /// following the sun, temperature drifting up in the afternoon.
     static func sampleSeries(hours: Int = 24, every minutes: Int = 5) -> [Reading] {

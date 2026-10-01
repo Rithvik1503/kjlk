@@ -21,8 +21,7 @@ struct NowView: View {
                     VStack(spacing: 14) {
                         ThermalCard(
                             temperature: store.value(for: .temperature),
-                            dayAverage: store.dayAverage(of: .temperature),
-                            comparison: store.thermalComparison
+                            dayAverage: store.dayAverage(of: .temperature)
                         )
 
                         atmosphereSection
@@ -67,7 +66,9 @@ struct NowView: View {
                     MetricCard(
                         metric: metric,
                         value: store.value(for: metric),
-                        range: store.scale(for: metric)
+                        range: store.scale(for: metric),
+                        change: store.hourlyChange(for: metric),
+                        isAverage: !store.isViewingToday
                     ) {
                         chartMetric = metric
                     }
@@ -96,6 +97,7 @@ struct NowView: View {
             } label: {
                 Image(systemName: "chevron.left")
             }
+            .disabled(!store.canGoBack(from: store.selectedDate))
             .accessibilityLabel("Previous day")
 
             Button {
@@ -125,7 +127,7 @@ struct NowView: View {
         DatePicker(
             "Date",
             selection: $store.selectedDate,
-            in: ...Date(),
+            in: store.earliestSelectableDate...Date(),
             displayedComponents: .date
         )
         .datePickerStyle(.graphical)

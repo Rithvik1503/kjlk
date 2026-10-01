@@ -41,10 +41,6 @@ struct Reading: Identifiable, Hashable, Sendable {
         }
     }
 
-    /// True when at least one sensor reported something we can draw.
-    var hasAnyValue: Bool {
-        MetricKind.allCases.contains { value(for: $0) != nil }
-    }
 }
 
 // MARK: - Decoding

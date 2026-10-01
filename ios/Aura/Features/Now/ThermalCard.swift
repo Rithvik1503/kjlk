@@ -2,39 +2,32 @@ import SwiftUI
 
 /// Temperature, leading the screen unboxed.
 ///
-/// A large light figure on the left, and set well to its right the day's average with how it
-/// compares to the week before it. No card around it — it is the first thing on the page, and
-/// a box would put it on the same footing as the sensors below rather than above them.
+/// A large light figure, and set to its right the day's average. No card around it — it is
+/// the first thing on the page, and a box would put it on the same footing as the sensors
+/// below rather than above them.
 struct ThermalCard: View {
     /// Current temperature in °C, or the day's average when viewing a past day.
     let temperature: Double?
     /// Mean across the whole selected day.
     let dayAverage: Double?
-    /// "Hotter than usual", "About usual", or a plain description when there is no baseline.
-    let comparison: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 30) {
+        HStack(alignment: .top, spacing: 26) {
             figure
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(averageText)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.auraPrimaryText)
-
-                Text(comparison)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.top, 14)
+            Text(averageText)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                // Sits against the lower half of the figure rather than its cap height, so
+                // the pair reads as one block instead of two things starting at once.
+                .padding(.top, 36)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Thermal reading")
+        .accessibilityLabel("Temperature")
         .accessibilityValue(accessibilityValue)
     }
 
@@ -52,6 +45,8 @@ struct ThermalCard: View {
         .foregroundStyle(Color.auraPrimaryText)
         .lineLimit(1)
         .minimumScaleFactor(0.6)
+        // Nudged off the left edge, so the figure sits nearer the middle of the pair.
+        .padding(.leading, 14)
     }
 
     private var wholeDegrees: String {
@@ -68,16 +63,15 @@ struct ThermalCard: View {
     private var accessibilityValue: String {
         guard let temperature else { return "No reading" }
         let now = temperature.formatted(.number.precision(.fractionLength(1)))
-        return "\(now) degrees. \(averageText). \(comparison)."
+        return "\(now) degrees. \(averageText)."
     }
 }
 
 #Preview("Thermal") {
-    VStack(spacing: 16) {
-        ThermalCard(temperature: 25, dayAverage: 21.4, comparison: "Hotter than usual")
-        ThermalCard(temperature: 17, dayAverage: 18.2, comparison: "Colder than usual")
-        ThermalCard(temperature: 22, dayAverage: 22.1, comparison: "Comfortable")
-        ThermalCard(temperature: nil, dayAverage: nil, comparison: "No readings")
+    VStack(spacing: 24) {
+        ThermalCard(temperature: 25, dayAverage: 21.4)
+        ThermalCard(temperature: 17, dayAverage: 18.2)
+        ThermalCard(temperature: nil, dayAverage: nil)
     }
     .padding(20)
     .background(Color.auraBase)

@@ -199,40 +199,24 @@ actor SupabaseClient {
         return rows.map(\.deviceID)
     }
 
-    /// Mean temperature over `start..<end`, averaged by Postgres rather than on the phone.
-    ///
-    /// Returns nil when there is nothing in the window, and also when the project hasn't run
-    /// migration 0002 — the comparison this feeds is a nicety, so a missing function degrades
-    /// to "no baseline" rather than an error the user has to read.
-    func averageTemperature(from start: Date, to end: Date, deviceID: String?) async -> Double? {
-        var body: [String: String] = [
-            "p_from": PostgresDate.string(from: start),
-            "p_to": PostgresDate.string(from: end),
+    /// When this device first reported, which is as far back as any date picker should go.
+    func firstReadingDate(deviceID: String?) async throws -> Date? {
+        var query: [URLQueryItem] = [
+            URLQueryItem(name: "select", value: "recorded_at"),
+            URLQueryItem(name: "order", value: "recorded_at.asc"),
+            URLQueryItem(name: "limit", value: "1"),
         ]
         if let deviceID, !deviceID.isEmpty {
-            body["p_device"] = deviceID
+            query.append(URLQueryItem(name: "device_id", value: "eq.\(deviceID)"))
         }
 
-        guard let data = try? await restPost(function: "aura_average_temperature", body: body) else {
-            return nil
+        struct Row: Decodable {
+            let recordedAt: String
+            private enum CodingKeys: String, CodingKey { case recordedAt = "recorded_at" }
         }
-        return Self.scalarDouble(from: data)
-    }
 
-    /// PostgREST renders a scalar-returning function differently depending on version and
-    /// Accept header: a bare number, a one-element array, or an array of one-key objects.
-    private static func scalarDouble(from data: Data) -> Double? {
-        if let value = try? JSONDecoder().decode(Double.self, from: data) {
-            return value.isFinite ? value : nil
-        }
-        if let values = try? JSONDecoder().decode([Double].self, from: data) {
-            return values.first.flatMap { $0.isFinite ? $0 : nil }
-        }
-        if let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-           let first = rows.first?.values.first {
-            return (first as? NSNumber)?.doubleValue
-        }
-        return nil
+        let rows: [Row] = try await restGet(table: "readings", query: query)
+        return rows.first.flatMap { PostgresDate.parse($0.recordedAt) }
     }
 
     /// Per-day or per-month means of every sensor, aggregated by Postgres.

@@ -21,9 +21,9 @@ final class AuraStore: ObservableObject {
     @Published private(set) var readings: [Reading] = []
     @Published private(set) var errorMessage: String?
     @Published private(set) var devices: [String] = []
-    /// Mean temperature over the week before the selected day, or nil if unavailable.
-    @Published private(set) var temperatureBaseline: Double?
     @Published var accountEmail: String?
+    /// When this monitor first reported. No date picker should go further back than this.
+    @Published private(set) var firstReadingAt: Date?
 
     /// The day being shown. Views reload by keying a `.task` on this.
     @Published var selectedDate: Date = Date()
@@ -32,9 +32,10 @@ final class AuraStore: ObservableObject {
 
     let preferences: Preferences
 
+    let notifier = AirQualityNotifier()
+
     private let client: SupabaseClient
     private let realtime: RealtimeChannel
-    private let cache: ReadingCache
     private let calendar = Calendar.current
 
     private var realtimeTask: Task<Void, Never>?
@@ -45,23 +46,23 @@ final class AuraStore: ObservableObject {
     init(
         preferences: Preferences? = nil,
         client: SupabaseClient = SupabaseClient(),
-        realtime: RealtimeChannel = RealtimeChannel(),
-        cache: ReadingCache = ReadingCache()
+        realtime: RealtimeChannel = RealtimeChannel()
     ) {
         let preferences = preferences ?? Preferences()
 
         self.preferences = preferences
         self.client = client
         self.realtime = realtime
-        self.cache = cache
 
         // Views observe the store, not `Preferences`, so the signal is forwarded. The
         // publisher only ever fires on the main actor, because `Preferences` is isolated to it.
-        preferences.objectWillChange
-            .sink { [weak self] _ in
-                MainActor.assumeIsolated { self?.objectWillChange.send() }
-            }
-            .store(in: &cancellables)
+        for publisher in [preferences.objectWillChange, notifier.objectWillChange] {
+            publisher
+                .sink { [weak self] _ in
+                    MainActor.assumeIsolated { self?.objectWillChange.send() }
+                }
+                .store(in: &cancellables)
+        }
     }
 
     // MARK: - Derived state
@@ -97,21 +98,35 @@ final class AuraStore: ObservableObject {
         return values.reduce(0, +) / Double(values.count)
     }
 
-    /// How the selected day's temperature compares with the week before it.
+    /// How much a metric has moved in the last hour, and whether that was for the worse.
     ///
-    /// Falls back to describing the day on its own terms when there is no baseline — either
-    /// too little history, or the project hasn't run the optional migration that adds the
-    /// averaging function.
-    var thermalComparison: String {
-        guard let today = dayAverage(of: .temperature) else { return "No readings" }
+    /// Only meaningful for today — a past day has no "last hour" — and only when there is a
+    /// reading old enough to compare against.
+    func hourlyChange(for metric: MetricKind) -> MetricChange? {
+        guard isViewingToday else { return nil }
 
-        guard let baseline = temperatureBaseline else {
-            return MetricKind.temperature.label(for: today)
-        }
+        let cutoff = Date().addingTimeInterval(-3600)
+        guard
+            let current = value(for: metric),
+            let earlier = readings.last(where: { $0.recordedAt <= cutoff && $0.value(for: metric) != nil }),
+            let previous = earlier.value(for: metric)
+        else { return nil }
 
-        let delta = today - baseline
-        if abs(delta) < 0.5 { return "About usual" }
-        return delta > 0 ? "Hotter than usual" : "Colder than usual"
+        let delta = current - previous
+        guard abs(delta) >= metric.changeThreshold else { return nil }
+
+        // Direction is what the number did; worse is what that meant.
+        let worse = metric.distanceFromIdeal(current) > metric.distanceFromIdeal(previous)
+        return MetricChange(delta: delta, isWorse: worse)
+    }
+
+    /// The earliest day any picker should offer — when the monitor started reporting.
+    var earliestSelectableDate: Date {
+        firstReadingAt.map { calendar.startOfDay(for: $0) } ?? calendar.startOfDay(for: Date())
+    }
+
+    func canGoBack(from date: Date) -> Bool {
+        calendar.startOfDay(for: date) > earliestSelectableDate
     }
 
     /// The span a metric's indicator should cover.
@@ -162,30 +177,20 @@ final class AuraStore: ObservableObject {
         accountEmail = await client.currentSession?.email
         phase = .ready
 
-        loadCachedReadings()
+        await notifier.refreshAuthorization()
+
         await loadSelectedDay()
         startLiveUpdates()
         startPolling()
-    }
-
-    /// Shows the last session's readings immediately, so the first frame is never empty.
-    private func loadCachedReadings() {
-        guard readings.isEmpty, isViewingToday, let snapshot = cache.load() else { return }
-        guard snapshot.deviceID == preferences.selectedDeviceID else { return }
-
-        let today = calendar.startOfDay(for: Date())
-        let recent = snapshot.readings.filter { $0.recordedAt >= today }
-        guard !recent.isEmpty else { return }
-
-        readings = recent
     }
 
     // MARK: - Date selection
 
     func step(days: Int) {
         guard let next = calendar.date(byAdding: .day, value: days, to: selectedDate) else { return }
-        // Never walk past today — there is nothing there.
+        // Never walk past today, or back before the first reading — there is nothing either way.
         guard next <= Date() || calendar.isDateInToday(next) else { return }
+        guard calendar.startOfDay(for: next) >= earliestSelectableDate else { return }
         selectedDate = next
     }
 
@@ -232,11 +237,15 @@ final class AuraStore: ObservableObject {
             readings = fetched
             errorMessage = nil
 
-            if calendar.isDateInToday(day) {
-                cache.save(readings: fetched, deviceID: preferences.selectedDeviceID)
-            }
             await refreshDeviceList()
-            await loadTemperatureBaseline(before: start)
+            await refreshFirstReadingDate()
+
+            if calendar.isDateInToday(day) {
+                await notifier.evaluate(
+                    readings: fetched,
+                    enabled: preferences.notificationsEnabled
+                )
+            }
         } catch is CancellationError {
             return
         } catch let error as SupabaseError {
@@ -252,17 +261,10 @@ final class AuraStore: ObservableObject {
         }
     }
 
-    /// Averages the seven days before the one on screen, for the "than usual" comparison.
-    private func loadTemperatureBaseline(before dayStart: Date) async {
-        guard let weekEarlier = calendar.date(byAdding: .day, value: -7, to: dayStart) else { return }
-
-        let baseline = await client.averageTemperature(
-            from: weekEarlier,
-            to: dayStart,
-            deviceID: preferences.selectedDeviceID
-        )
-        guard !Task.isCancelled else { return }
-        temperatureBaseline = baseline
+    /// Fetched once per session — it only moves when the monitor is brand new.
+    private func refreshFirstReadingDate() async {
+        guard firstReadingAt == nil else { return }
+        firstReadingAt = try? await client.firstReadingDate(deviceID: preferences.selectedDeviceID)
     }
 
     private func refreshDeviceList() async {
@@ -274,7 +276,7 @@ final class AuraStore: ObservableObject {
     func selectDevice(_ deviceID: String?) async {
         guard preferences.selectedDeviceID != deviceID else { return }
         preferences.selectedDeviceID = deviceID
-        cache.clear()
+        firstReadingAt = nil
         readings = []
         await loadSelectedDay()
     }
@@ -331,12 +333,12 @@ final class AuraStore: ObservableObject {
         loadTask?.cancel()
 
         await client.signOut()
-        cache.clear()
 
         readings = []
         devices = []
         errorMessage = nil
         accountEmail = nil
+        firstReadingAt = nil
         selectedDate = Date()
         phase = .needsSignIn
     }
@@ -400,7 +402,6 @@ final class AuraStore: ObservableObject {
             readings.insert(reading, at: index)
         }
 
-        cache.save(readings: readings, deviceID: preferences.selectedDeviceID)
     }
 
     private func matchesSelectedDevice(_ reading: Reading) -> Bool {

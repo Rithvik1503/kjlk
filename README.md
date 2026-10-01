@@ -60,11 +60,6 @@ means in Postgres, bucketed in your own time zone — six months of minute-resol
 a quarter of a million rows and the screen needs six numbers from them. Without it Trends says
 so and tells you which file to run.
 
-`0002_thermal_baseline.sql` is optional. It adds a function that averages temperature over a
-window in Postgres, which the thermal card uses for its "than usual" comparison — a week of
-minute-resolution readings is around ten thousand rows and the app only needs one number from
-them. Without it the card describes the day on its own terms instead, so nothing breaks.
-
 **Account.** Authentication → Users → Add user. Create the account you'll sign into the app
 with, then copy its UUID.
 
@@ -184,7 +179,22 @@ no "now", and whatever it happened to end on at 3am is a worse answer to "what w
 here". Today resolves each metric independently, so a dropped BH1750 read doesn't blank the
 light figure while the SCD40 in the same row is reporting fine.
 
-Settings is a sheet: monitor picker, account, sign out, disconnect.
+Date pickers stop at the first reading the monitor ever sent, so there is no walking back
+through months that were never recorded.
+
+Settings is a sheet: monitor picker, notifications, account, sign out, disconnect.
+
+### Notifications
+
+Opt in from Settings. Aura posts a local notification when a sensor crosses into a *worse band*
+than it was in an hour ago — band crossings, not raw movement, because 620 → 780 ppm is a rise
+but still fresh air. Each metric then stays quiet for an hour, so a value hovering on a
+threshold can't buzz the phone on every refresh.
+
+These are local notifications, evaluated when the app loads data. That covers the foreground.
+To have them fire while Aura isn't open, turn on **Signing & Capabilities → Background Modes
+→ Background fetch** in Xcode. Alerting after hours of the app not running at all would need
+push from the server, which this doesn't do.
 
 ### Trends
 
@@ -217,8 +227,9 @@ enclosing `ScrollView`, and the page would stop scrolling wherever a chart happe
 - **No dependencies.** Auth, PostgREST and Realtime are a few hundred lines of `URLSession`.
 - **Live updates are silent.** New rows arrive over Realtime and simply appear, with polling
   underneath as a safety net. Nothing in the UI reports on the state of the connection.
-- **Opens with data.** Today's readings are cached to disk, so the first frame is never a
-  spinner.
+- **Nothing is stored on the phone.** Every number and every chart is fetched from Supabase
+  on demand. The keychain holds the auth session and `UserDefaults` holds two settings; no
+  reading is ever written to disk.
 - **Gaps stay gaps.** A failed sensor decodes to `nil` and is skipped. Nothing is zero-filled.
 
 Temperature, humidity and light are still fetched, decoded and banded — they're just not

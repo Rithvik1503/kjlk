@@ -126,6 +126,7 @@ struct TrendsView: View {
             } label: {
                 Image(systemName: "chevron.left")
             }
+            .disabled(!store.canGoBack(from: anchor))
             .accessibilityLabel("Previous \(trends.window.title.lowercased())")
 
             Button {
@@ -145,7 +146,7 @@ struct TrendsView: View {
                 DatePicker(
                     "Date",
                     selection: $store.selectedDate,
-                    in: ...Date(),
+                    in: store.earliestSelectableDate...Date(),
                     displayedComponents: .date
                 )
                 .datePickerStyle(.graphical)

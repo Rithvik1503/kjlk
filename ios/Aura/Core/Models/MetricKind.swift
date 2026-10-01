@@ -58,36 +58,36 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .co2:
             [
-                MetricBand(upperBound: 800, label: "Fresh", tint: .auraGreen),
-                MetricBand(upperBound: 1200, label: "Stuffy", tint: .auraYellow),
-                MetricBand(upperBound: 1600, label: "Poor", tint: .auraOrange),
-                MetricBand(upperBound: .infinity, label: "Bad", tint: .auraRed),
+                MetricBand(upperBound: 800, label: "Fresh", tint: .auraGreen, severity: 0),
+                MetricBand(upperBound: 1200, label: "Stuffy", tint: .auraYellow, severity: 1),
+                MetricBand(upperBound: 1600, label: "Poor", tint: .auraOrange, severity: 2),
+                MetricBand(upperBound: .infinity, label: "Bad", tint: .auraRed, severity: 3),
             ]
         case .humidity:
             [
-                MetricBand(upperBound: 20, label: "Very dry", tint: .auraRed),
-                MetricBand(upperBound: 30, label: "Dry", tint: .auraOrange),
-                MetricBand(upperBound: 40, label: "A bit dry", tint: .auraYellow),
-                MetricBand(upperBound: 60, label: "Comfortable", tint: .auraGreen),
-                MetricBand(upperBound: 70, label: "Humid", tint: .auraYellow),
-                MetricBand(upperBound: 80, label: "Very humid", tint: .auraOrange),
-                MetricBand(upperBound: .infinity, label: "Damp", tint: .auraRed),
+                MetricBand(upperBound: 20, label: "Very dry", tint: .auraRed, severity: 3),
+                MetricBand(upperBound: 30, label: "Dry", tint: .auraOrange, severity: 2),
+                MetricBand(upperBound: 40, label: "A bit dry", tint: .auraYellow, severity: 1),
+                MetricBand(upperBound: 60, label: "Comfortable", tint: .auraGreen, severity: 0),
+                MetricBand(upperBound: 70, label: "Humid", tint: .auraYellow, severity: 1),
+                MetricBand(upperBound: 80, label: "Very humid", tint: .auraOrange, severity: 2),
+                MetricBand(upperBound: .infinity, label: "Damp", tint: .auraRed, severity: 3),
             ]
         case .light:
             [
-                MetricBand(upperBound: 20, label: "Dark", tint: .auraOrange),
-                MetricBand(upperBound: 80, label: "Dim", tint: .auraYellow),
-                MetricBand(upperBound: .infinity, label: "Bright", tint: .auraGreen),
+                MetricBand(upperBound: 20, label: "Dark", tint: .auraOrange, severity: 2),
+                MetricBand(upperBound: 80, label: "Dim", tint: .auraYellow, severity: 1),
+                MetricBand(upperBound: .infinity, label: "Bright", tint: .auraGreen, severity: 0),
             ]
         case .temperature:
             // Kept on a cold-to-hot ramp rather than a severity one: the thermal card uses it
             // for a background wash, where blue reading as "cold" is the point.
             [
-                MetricBand(upperBound: 16, label: "Cold", tint: .auraBlue),
-                MetricBand(upperBound: 19, label: "Cool", tint: .auraCyan),
-                MetricBand(upperBound: 25, label: "Comfortable", tint: .auraGreen),
-                MetricBand(upperBound: 28, label: "Warm", tint: .auraAmber),
-                MetricBand(upperBound: .infinity, label: "Hot", tint: .auraRed),
+                MetricBand(upperBound: 16, label: "Cold", tint: .auraBlue, severity: 2),
+                MetricBand(upperBound: 19, label: "Cool", tint: .auraCyan, severity: 1),
+                MetricBand(upperBound: 25, label: "Comfortable", tint: .auraGreen, severity: 0),
+                MetricBand(upperBound: 28, label: "Warm", tint: .auraAmber, severity: 1),
+                MetricBand(upperBound: .infinity, label: "Hot", tint: .auraRed, severity: 2),
             ]
         }
     }
@@ -104,6 +104,30 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
     func label(for value: Double?) -> String {
         guard let value else { return "No reading" }
         return band(for: value).label
+    }
+
+    /// Smallest movement worth reporting. Below this it is sensor noise, not a change.
+    var changeThreshold: Double {
+        switch self {
+        case .co2: 15
+        case .temperature: 0.3
+        case .humidity: 2
+        case .light: 20
+        }
+    }
+
+    /// How far from ideal a value is, on an arbitrary but monotonic scale.
+    ///
+    /// The band rank says which step a value is on; this says which way it moved within one,
+    /// so an hour that went 620 → 780 ppm still reads as getting worse.
+    func distanceFromIdeal(_ value: Double) -> Double {
+        switch self {
+        case .co2: value
+        case .humidity: abs(value - 50)
+        case .temperature: abs(value - 22)
+        // Darker is worse, up to the point where there is plenty of light either way.
+        case .light: -min(value, 500)
+        }
     }
 
     /// Where a value sits across `range`, as 0...1.
@@ -153,32 +177,19 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
         }
         return stops
     }
+}
 
-    var explainer: String {
-        switch self {
-        case .co2:
-            """
-            Carbon dioxide builds up when a room is sealed and someone is breathing in it. \
-            Outdoor air sits around 420 ppm. Above roughly 1000 ppm most people start to feel \
-            drowsy and find it harder to concentrate; above 1600 ppm the room badly needs air.
-            """
-        case .temperature:
-            """
-            Measured by the SCD40 next to the CO₂ cell. The sensor sits inside its own \
-            enclosure, so it usually reads a little warmer than the room.
-            """
-        case .humidity:
-            """
-            Relative humidity. Below 30% skin and eyes dry out; above 60% the room starts to \
-            feel heavy. Between 40% and 60% is the sweet spot.
-            """
-        case .light:
-            """
-            Illuminance at the sensor, in lux. A dim living room is around 50 lux, a well lit \
-            desk 300–500 lux, and an overcast day outdoors is well over 1000 lux.
-            """
-        }
-    }
+/// A metric's movement over some window — how far it went, and whether that was for the worse.
+///
+/// The two are separate because they disagree: CO₂ falling is an improvement, humidity falling
+/// might be either, and the arrow should show what the number did while the colour shows what
+/// it meant.
+struct MetricChange: Hashable, Sendable {
+    let delta: Double
+    let isWorse: Bool
+
+    var isRising: Bool { delta > 0 }
+    var magnitude: Double { abs(delta) }
 }
 
 /// One severity step within a metric — everything below `upperBound` and above the previous band.
@@ -186,6 +197,9 @@ struct MetricBand: Hashable, Sendable {
     let upperBound: Double
     let label: String
     let tint: Color
+    /// 0 is ideal, 3 is bad. Ordering the bands by position wouldn't work for humidity or
+    /// temperature, which are bad at both ends.
+    let severity: Int
 }
 
 extension Comparable {

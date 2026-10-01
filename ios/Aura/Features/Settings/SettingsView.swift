@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Device, account, and the way out — a stock `Form`, presented as a sheet from the header.
 struct SettingsView: View {
@@ -12,6 +13,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 deviceSection
+                notificationsSection
                 accountSection
                 aboutSection
             }
@@ -77,6 +79,46 @@ struct SettingsView: View {
         Binding(
             get: { store.preferences.selectedDeviceID },
             set: { newValue in Task { await store.selectDevice(newValue) } }
+        )
+    }
+
+    @ViewBuilder
+    private var notificationsSection: some View {
+        Section {
+            Toggle("Tell me when it gets worse", isOn: notificationBinding)
+
+            if store.preferences.notificationsEnabled,
+               store.notifier.authorization == .denied {
+                Button("Open iOS Settings") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(url)
+                }
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            if store.notifier.authorization == .denied {
+                Text("Notifications are turned off for Aura in iOS Settings.")
+            } else {
+                Text("Alerts when a sensor crosses into a worse band than it was in an hour ago — not for every wobble. Delivered while Aura is running, or during a background refresh if that's enabled.")
+            }
+        }
+    }
+
+    private var notificationBinding: Binding<Bool> {
+        Binding(
+            get: { store.preferences.notificationsEnabled },
+            set: { wanted in
+                guard wanted else {
+                    store.preferences.notificationsEnabled = false
+                    return
+                }
+                // Permission first — a toggle that says "on" without it would be a lie.
+                Task {
+                    let granted = await store.notifier.requestAuthorization()
+                    store.preferences.notificationsEnabled = granted
+                }
+            }
         )
     }
 
