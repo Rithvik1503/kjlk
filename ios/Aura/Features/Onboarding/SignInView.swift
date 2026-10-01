@@ -41,105 +41,78 @@ struct SignInView: View {
     }
 
     var body: some View {
-        ZStack {
-            AuraBackground(tint: .auraViolet, intensity: 0.6)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    masthead
-
-                    SegmentedPills(
-                        items: Mode.allCases,
-                        selection: $mode,
-                        title: { $0.title }
-                    )
-
-                    GlassCard {
-                        VStack(alignment: .leading, spacing: 18) {
-                            AuraTextField(
-                                title: "Email",
-                                placeholder: "you@example.com",
-                                text: $email,
-                                symbol: "envelope",
-                                contentType: .username,
-                                keyboard: .emailAddress
-                            )
-                            .focused($focused, equals: .email)
-                            .submitLabel(.next)
-                            .onSubmit { focused = .password }
-
-                            AuraTextField(
-                                title: "Password",
-                                placeholder: "At least 6 characters",
-                                text: $password,
-                                symbol: "lock",
-                                isSecure: true,
-                                contentType: mode == .signUp ? .newPassword : .password
-                            )
-                            .focused($focused, equals: .password)
-                            .submitLabel(.go)
-                            .onSubmit { submit() }
-
-                            if mode == .signIn {
-                                Button("Forgot password?") { resetPassword() }
-                                    .font(.auraCaption)
-                                    .foregroundStyle(Color.auraCyan)
-                                    .disabled(!email.contains("@") || isWorking)
-                            }
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Mode", selection: $mode) {
+                        ForEach(Mode.allCases) { mode in
+                            Text(mode.title).tag(mode)
                         }
                     }
+                    .pickerStyle(.segmented)
+                }
 
-                    if let message {
+                Section {
+                    TextField("you@example.com", text: $email)
+                        .textContentType(.username)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focused, equals: .email)
+                        .submitLabel(.next)
+                        .onSubmit { focused = .password }
+
+                    SecureField("Password", text: $password)
+                        .textContentType(mode == .signUp ? .newPassword : .password)
+                        .focused($focused, equals: .password)
+                        .submitLabel(.go)
+                        .onSubmit(submit)
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text("Use the account whose user ID is set as OWNER_USER_ID in your Supabase secrets.")
+                }
+
+                if let message {
+                    Section {
                         Label(
                             message.text,
-                            systemImage: message.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                            systemImage: message.isError
+                                ? "exclamationmark.triangle.fill"
+                                : "checkmark.circle.fill"
                         )
-                        .font(.auraLabel)
-                        .foregroundStyle(message.isError ? Color.auraRed : Color.auraGreen)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(message.isError ? .red : .green)
                     }
+                }
 
-                    ProminentButton(
-                        title: mode.title,
-                        symbol: "arrow.right",
-                        tint: .auraViolet,
-                        isLoading: isWorking
-                    ) {
-                        submit()
+                Section {
+                    Button(action: submit) {
+                        HStack {
+                            Spacer()
+                            if isWorking {
+                                ProgressView()
+                            } else {
+                                Text(mode.title)
+                            }
+                            Spacer()
+                        }
                     }
                     .disabled(!canSubmit)
-                    .opacity(canSubmit ? 1 : 0.5)
 
-                    Button {
-                        Task { await store.disconnectProject() }
-                    } label: {
-                        Label("Use a different project", systemImage: "arrow.triangle.2.circlepath")
-                            .font(.auraCaption)
-                            .foregroundStyle(Color.auraTertiaryText)
+                    if mode == .signIn {
+                        Button("Forgot password?", action: resetPassword)
+                            .disabled(!email.contains("@") || isWorking)
                     }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, Metrics.screenPadding)
-                .padding(.vertical, 44)
+
+                Section {
+                    Button("Use a different project", role: .destructive) {
+                        Task { await store.disconnectProject() }
+                    }
+                }
             }
-            .scrollIndicators(.hidden)
+            .navigationTitle("Aura")
             .scrollDismissesKeyboard(.interactively)
-        }
-        .animation(Motion.snappy, value: mode)
-        .animation(Motion.snappy, value: message)
-    }
-
-    private var masthead: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Welcome back")
-                .font(.auraDisplay(32, weight: .bold))
-                .foregroundStyle(Color.auraPrimaryText)
-
-            Text("Sign in with the account that owns your readings.")
-                .font(.auraLabel)
-                .foregroundStyle(Color.auraSecondaryText)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -154,13 +127,10 @@ struct SignInView: View {
                 switch mode {
                 case .signIn:
                     try await store.signIn(email: email, password: password)
-                    Haptics.success()
 
                 case .signUp:
                     let signedIn = try await store.signUp(email: email, password: password)
-                    if signedIn {
-                        Haptics.success()
-                    } else {
+                    if !signedIn {
                         message = Message(
                             text: "Check your inbox for a confirmation link, then sign in.",
                             isError: false
@@ -170,7 +140,6 @@ struct SignInView: View {
                 }
             } catch {
                 message = Message(text: error.localizedDescription, isError: true)
-                Haptics.error()
             }
             isWorking = false
         }

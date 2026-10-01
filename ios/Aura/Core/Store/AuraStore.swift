@@ -4,12 +4,10 @@ import SwiftUI
 
 /// The one object the UI observes.
 ///
-/// Holds the session state, the readings for the selected range, and the derived summaries.
-/// Views read; everything that mutates goes through a method here.
+/// The app shows one day at a time. `selectedDate` is the day on screen; everything else is
+/// derived from the readings of that day.
 @MainActor
 final class AuraStore: ObservableObject {
-    // MARK: - Published state
-
     enum Phase: Equatable {
         case launching
         case needsConfiguration
@@ -17,29 +15,17 @@ final class AuraStore: ObservableObject {
         case ready
     }
 
+    // MARK: - Published state
+
     @Published private(set) var phase: Phase = .launching
     @Published private(set) var readings: [Reading] = []
-    @Published private(set) var latest: Reading?
-    @Published private(set) var status: RoomStatus = .unknown
-    @Published private(set) var summaries: [MetricKind: MetricSummary] = [:]
-    @Published private(set) var devices: [String] = []
-
-    @Published private(set) var isRefreshing = false
-    @Published private(set) var isLiveConnected = false
-    @Published private(set) var lastUpdated: Date?
+    @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
-    /// True while showing data restored from disk that hasn't been refreshed yet.
-    @Published private(set) var isShowingCachedData = false
-
-    @Published var range: TimeRange {
-        didSet {
-            guard range != oldValue else { return }
-            preferences.preferredRange = range
-            Task { await refresh() }
-        }
-    }
-
+    @Published private(set) var devices: [String] = []
     @Published var accountEmail: String?
+
+    /// The day being shown. Views reload by keying a `.task` on this.
+    @Published var selectedDate: Date = Date()
 
     // MARK: - Dependencies
 
@@ -48,18 +34,13 @@ final class AuraStore: ObservableObject {
     private let client: SupabaseClient
     private let realtime: RealtimeChannel
     private let cache: ReadingCache
+    private let calendar = Calendar.current
 
     private var realtimeTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
-    private var refreshTask: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
-    /// Polls are a safety net under Realtime, and the only source when the socket is down.
-    private var pollInterval: TimeInterval { isLiveConnected ? 300 : 60 }
-
-    /// `Preferences` is main-actor isolated, and a default argument is evaluated in a
-    /// nonisolated context, so it can't be constructed in the signature. Passing nil and
-    /// building it in the body — which *is* isolated — gives the same ergonomics.
     init(
         preferences: Preferences? = nil,
         client: SupabaseClient = SupabaseClient(),
@@ -72,19 +53,67 @@ final class AuraStore: ObservableObject {
         self.client = client
         self.realtime = realtime
         self.cache = cache
-        self.range = preferences.preferredRange
 
-        // Views observe the store, not `Preferences`. Forwarding the signal means switching to
-        // Fahrenheit or nudging the calibration offset redraws every screen that shows a value,
-        // without each of them having to observe a second object.
-        // `Preferences` is main-actor isolated, so this publisher only ever fires on the main
-        // actor — stating that explicitly beats relying on how Combine's non-Sendable closure
-        // inherits isolation.
+        // Views observe the store, not `Preferences`, so the signal is forwarded. The
+        // publisher only ever fires on the main actor, because `Preferences` is isolated to it.
         preferences.objectWillChange
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.objectWillChange.send() }
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: - Derived state
+
+    var isViewingToday: Bool {
+        calendar.isDateInToday(selectedDate)
+    }
+
+    /// Most recent reading of the selected day.
+    var current: Reading? { readings.last }
+
+    /// The headline figure: the latest reading today, or the day's average for a past day.
+    ///
+    /// A past day has no "now", and its last reading — often taken at 3am — is a worse answer
+    /// to "what was it like in here" than the average of the whole day.
+    var headlineCO2: Double? {
+        isViewingToday ? current?.co2 : averageCO2
+    }
+
+    var averageCO2: Double? {
+        let values = readings.compactMap(\.co2)
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    var peakCO2: Double? {
+        readings.compactMap(\.co2).max()
+    }
+
+    var band: MetricBand? {
+        headlineCO2.map { MetricKind.co2.band(for: $0) }
+    }
+
+    var tint: Color {
+        MetricKind.co2.tint(for: headlineCO2)
+    }
+
+    /// Change over the last hour, for today's footer line.
+    var hourlyChange: Double? {
+        guard isViewingToday, let latest = current?.co2 else { return nil }
+
+        let cutoff = Date().addingTimeInterval(-3600)
+        // The reading closest to an hour ago, as long as something that old exists.
+        guard
+            let reference = readings.last(where: { $0.recordedAt <= cutoff })?.co2,
+            readings.count > 1
+        else { return nil }
+
+        return latest - reference
+    }
+
+    var canGoForward: Bool {
+        !isViewingToday
     }
 
     // MARK: - Launch
@@ -105,143 +134,75 @@ final class AuraStore: ObservableObject {
         phase = .ready
 
         loadCachedReadings()
-        await refresh()
+        await loadSelectedDay()
         startLiveUpdates()
         startPolling()
     }
 
-    /// Shows the last session's data immediately, so the first frame is never empty.
+    /// Shows the last session's readings immediately, so the first frame is never empty.
     private func loadCachedReadings() {
-        guard readings.isEmpty, let snapshot = cache.load() else { return }
+        guard readings.isEmpty, isViewingToday, let snapshot = cache.load() else { return }
         guard snapshot.deviceID == preferences.selectedDeviceID else { return }
 
-        let cutoff = range.start()
-        let recent = snapshot.readings.filter { $0.recordedAt >= cutoff }
+        let today = calendar.startOfDay(for: Date())
+        let recent = snapshot.readings.filter { $0.recordedAt >= today }
         guard !recent.isEmpty else { return }
 
-        apply(readings: recent)
-        isShowingCachedData = true
-        lastUpdated = snapshot.savedAt
+        readings = recent
     }
 
-    // MARK: - Configuration and auth
+    // MARK: - Date selection
 
-    func configure(urlString: String, anonKey: String) async throws {
-        guard let config = SupabaseConfig(rawURL: urlString, anonKey: anonKey) else {
-            throw SupabaseError.transport("That doesn't look like a Supabase URL.")
-        }
-        await client.configure(config)
-
-        // Pointing at a new project clears any session, so this is normally the sign-in path.
-        // It can still land on `.ready` when the same project is re-entered, and that case
-        // has to bring the data loop up itself — nothing else will.
-        let signedIn = await client.isSignedIn
-        guard signedIn else {
-            phase = .needsSignIn
-            return
-        }
-
-        phase = .ready
-        await refresh()
-        startLiveUpdates()
-        startPolling()
+    func step(days: Int) {
+        guard let next = calendar.date(byAdding: .day, value: days, to: selectedDate) else { return }
+        // Never walk past today — there is nothing there.
+        guard next <= Date() || calendar.isDateInToday(next) else { return }
+        selectedDate = next
     }
 
-    func signIn(email: String, password: String) async throws {
-        let session = try await client.signIn(email: email, password: password)
-        accountEmail = session.email
-        phase = .ready
-
-        await refresh()
-        startLiveUpdates()
-        startPolling()
-    }
-
-    /// Returns false when Supabase requires the address to be confirmed before signing in.
-    func signUp(email: String, password: String) async throws -> Bool {
-        let session = try await client.signUp(email: email, password: password)
-        guard let session else { return false }
-
-        accountEmail = session.email
-        phase = .ready
-
-        await refresh()
-        startLiveUpdates()
-        startPolling()
-        return true
-    }
-
-    func sendPasswordReset(email: String) async throws {
-        try await client.sendPasswordReset(email: email)
-    }
-
-    func signOut() async {
-        stopLiveUpdates()
-        stopPolling()
-        refreshTask?.cancel()
-
-        await client.signOut()
-        cache.clear()
-
-        readings = []
-        latest = nil
-        summaries = [:]
-        status = .unknown
-        devices = []
-        lastUpdated = nil
-        errorMessage = nil
-        isShowingCachedData = false
-        accountEmail = nil
-        phase = .needsSignIn
-    }
-
-    func disconnectProject() async {
-        await signOut()
-        await client.clearConfiguration()
-        phase = .needsConfiguration
+    func goToToday() {
+        selectedDate = Date()
     }
 
     // MARK: - Loading
 
-    /// Reloads the current range. Safe to call from anywhere; overlapping calls collapse.
-    func refresh() async {
-        refreshTask?.cancel()
+    /// Loads the selected day. Overlapping calls collapse onto the latest one.
+    func loadSelectedDay() async {
+        loadTask?.cancel()
 
-        // Unwrapped rather than optional-chained: `await self?.performRefresh()` would make
-        // the closure return `Void?`, giving a `Task<Void?, Never>`.
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.performRefresh()
+            await self.performLoad()
         }
-        refreshTask = task
+        loadTask = task
         await task.value
     }
 
-    private func performRefresh() async {
+    private func performLoad() async {
         guard phase == .ready else { return }
 
-        isRefreshing = true
-        defer { isRefreshing = false }
+        isLoading = true
+        defer { isLoading = false }
 
-        let end = Date()
-        let start = range.start(from: end)
-        let deviceID = preferences.selectedDeviceID
+        let day = selectedDate
+        let start = calendar.startOfDay(for: day)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return }
 
         do {
             let fetched = try await client.readings(
                 from: start,
-                to: end,
-                deviceID: deviceID,
-                limit: range.rowLimit
+                to: end.addingTimeInterval(-1),
+                deviceID: preferences.selectedDeviceID,
+                limit: 5000
             )
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, calendar.isDate(day, inSameDayAs: selectedDate) else { return }
 
-            apply(readings: fetched)
-            lastUpdated = Date()
-            isShowingCachedData = false
+            readings = fetched
             errorMessage = nil
-            cache.save(readings: fetched, deviceID: deviceID)
 
+            if calendar.isDateInToday(day) {
+                cache.save(readings: fetched, deviceID: preferences.selectedDeviceID)
+            }
             await refreshDeviceList()
         } catch is CancellationError {
             return
@@ -250,7 +211,6 @@ final class AuraStore: ObservableObject {
             if case .notSignedIn = error {
                 await handleSessionExpiry()
             } else {
-                // Keep whatever is on screen; a failed refresh shouldn't blank the dashboard.
                 errorMessage = error.localizedDescription
             }
         } catch {
@@ -261,7 +221,7 @@ final class AuraStore: ObservableObject {
 
     private func refreshDeviceList() async {
         guard devices.isEmpty else { return }
-        // The device list is a nicety — a project without the helper view still works.
+        // A nicety — a project without the helper view still works.
         devices = (try? await client.knownDevices()) ?? []
     }
 
@@ -270,10 +230,75 @@ final class AuraStore: ObservableObject {
         preferences.selectedDeviceID = deviceID
         cache.clear()
         readings = []
-        latest = nil
-        summaries = [:]
-        status = .unknown
-        await refresh()
+        await loadSelectedDay()
+    }
+
+    func dismissError() {
+        errorMessage = nil
+    }
+
+    // MARK: - Auth
+
+    func configure(urlString: String, anonKey: String) async throws {
+        guard let config = SupabaseConfig(rawURL: urlString, anonKey: anonKey) else {
+            throw SupabaseError.transport("That doesn't look like a Supabase URL.")
+        }
+        await client.configure(config)
+
+        guard await client.isSignedIn else {
+            phase = .needsSignIn
+            return
+        }
+        await enterReadyState()
+    }
+
+    func signIn(email: String, password: String) async throws {
+        let session = try await client.signIn(email: email, password: password)
+        accountEmail = session.email
+        await enterReadyState()
+    }
+
+    /// Returns false when Supabase requires the address to be confirmed before signing in.
+    func signUp(email: String, password: String) async throws -> Bool {
+        guard let session = try await client.signUp(email: email, password: password) else {
+            return false
+        }
+        accountEmail = session.email
+        await enterReadyState()
+        return true
+    }
+
+    func sendPasswordReset(email: String) async throws {
+        try await client.sendPasswordReset(email: email)
+    }
+
+    private func enterReadyState() async {
+        phase = .ready
+        await loadSelectedDay()
+        startLiveUpdates()
+        startPolling()
+    }
+
+    func signOut() async {
+        stopLiveUpdates()
+        stopPolling()
+        loadTask?.cancel()
+
+        await client.signOut()
+        cache.clear()
+
+        readings = []
+        devices = []
+        errorMessage = nil
+        accountEmail = nil
+        selectedDate = Date()
+        phase = .needsSignIn
+    }
+
+    func disconnectProject() async {
+        await signOut()
+        await client.clearConfiguration()
+        phase = .needsConfiguration
     }
 
     private func handleSessionExpiry() async {
@@ -284,46 +309,16 @@ final class AuraStore: ObservableObject {
         phase = .needsSignIn
     }
 
-    // MARK: - Derived state
-
-    private func apply(readings newReadings: [Reading]) {
-        readings = newReadings
-        latest = newReadings.last
-
-        var built: [MetricKind: MetricSummary] = [:]
-        for metric in MetricKind.allCases {
-            built[metric] = MetricSummary.make(metric: metric, readings: newReadings)
-        }
-        summaries = built
-        status = RoomStatus.evaluate(newReadings.last)
-    }
-
-    /// Bucketed points for a chart of `metric` over the current range.
-    func trend(for metric: MetricKind) -> [TrendPoint] {
-        let end = lastUpdated ?? Date()
-        return Trend.buckets(
-            from: readings,
-            metric: metric,
-            interval: range.bucket,
-            start: range.start(from: end),
-            end: end
-        )
-    }
-
-    var isStale: Bool {
-        guard let latest else { return false }
-        // The firmware uploads once a minute; fifteen minutes of silence means something is wrong.
-        return Date().timeIntervalSince(latest.recordedAt) > 900
-    }
-
-    // MARK: - Live updates
+    // MARK: - Updates
+    //
+    // Both of these run silently. New readings simply appear; nothing in the UI reports on
+    // the state of the connection.
 
     func startLiveUpdates() {
-        guard preferences.liveUpdatesEnabled, phase == .ready, realtimeTask == nil else { return }
+        guard phase == .ready, realtimeTask == nil else { return }
 
         realtimeTask = Task { @MainActor [weak self] in
             guard let self else { return }
-
             guard
                 let config = await self.client.config,
                 let token = try? await self.client.validToken()
@@ -332,7 +327,9 @@ final class AuraStore: ObservableObject {
             let stream = await self.realtime.start(config: config, accessToken: token)
             for await event in stream {
                 guard !Task.isCancelled else { break }
-                self.handle(event)
+                if case let .inserted(reading) = event {
+                    self.insert(reading)
+                }
             }
         }
     }
@@ -340,22 +337,24 @@ final class AuraStore: ObservableObject {
     func stopLiveUpdates() {
         realtimeTask?.cancel()
         realtimeTask = nil
-        isLiveConnected = false
         Task { [realtime] in await realtime.stop() }
     }
 
-    private func handle(_ event: RealtimeChannel.Event) {
-        switch event {
-        case .connected:
-            isLiveConnected = true
+    /// Merges a pushed row into today's series, keeping it sorted and de-duplicated.
+    private func insert(_ reading: Reading) {
+        guard isViewingToday else { return }
+        guard matchesSelectedDevice(reading) else { return }
+        guard calendar.isDateInToday(reading.recordedAt) else { return }
+        guard !readings.contains(where: { $0.id == reading.id }) else { return }
 
-        case .disconnected:
-            isLiveConnected = false
-
-        case let .inserted(reading):
-            guard matchesSelectedDevice(reading) else { return }
-            insert(reading)
+        if let last = readings.last, reading.recordedAt >= last.recordedAt {
+            readings.append(reading)
+        } else {
+            let index = readings.firstIndex { $0.recordedAt > reading.recordedAt } ?? readings.count
+            readings.insert(reading, at: index)
         }
+
+        cache.save(readings: readings, deviceID: preferences.selectedDeviceID)
     }
 
     private func matchesSelectedDevice(_ reading: Reading) -> Bool {
@@ -363,43 +362,15 @@ final class AuraStore: ObservableObject {
         return reading.deviceID == selected
     }
 
-    /// Merges a pushed row into the in-memory series, keeping it sorted and de-duplicated.
-    private func insert(_ reading: Reading) {
-        guard reading.recordedAt >= range.start() else { return }
-        guard !readings.contains(where: { $0.id == reading.id }) else { return }
-
-        var updated = readings
-        if let last = updated.last, reading.recordedAt >= last.recordedAt {
-            updated.append(reading)
-        } else {
-            let index = updated.firstIndex { $0.recordedAt > reading.recordedAt } ?? updated.count
-            updated.insert(reading, at: index)
-        }
-
-        // Drop anything that has fallen out of the window as time has moved on.
-        let cutoff = range.start()
-        updated.removeAll { $0.recordedAt < cutoff }
-
-        apply(readings: updated)
-        lastUpdated = Date()
-        isShowingCachedData = false
-        cache.save(readings: updated, deviceID: preferences.selectedDeviceID)
-    }
-
-    // MARK: - Polling
-
     func startPolling() {
         guard pollTask == nil else { return }
 
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                guard let self else { return }
-                // Read the interval each time around: it halves once Realtime connects.
-                let interval = self.pollInterval
-
-                try? await Task.sleep(for: .seconds(interval))
+                try? await Task.sleep(for: .seconds(120))
                 guard !Task.isCancelled else { return }
-                await self.refresh()
+                guard let self, self.isViewingToday else { continue }
+                await self.loadSelectedDay()
             }
         }
     }
@@ -409,60 +380,29 @@ final class AuraStore: ObservableObject {
         pollTask = nil
     }
 
-    /// Called when the app comes back to the foreground.
     func handleForeground() {
         guard phase == .ready else { return }
         Task {
-            await refresh()
+            await loadSelectedDay()
             startLiveUpdates()
             startPolling()
         }
     }
 
-    /// Called on backgrounding — the socket would be torn down by the system anyway.
     func handleBackground() {
         stopLiveUpdates()
         stopPolling()
     }
-
-    func dismissError() {
-        errorMessage = nil
-    }
-
-    // MARK: - History
-
-    /// Every reading on the calendar day containing `date`, in the device's local time zone.
-    func readings(forDayContaining date: Date) async throws -> [Reading] {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: date)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
-
-        return try await client.readings(
-            from: start,
-            to: end.addingTimeInterval(-1),
-            deviceID: preferences.selectedDeviceID,
-            limit: 5000
-        )
-    }
-
-    /// Days in the month containing `date` that have at least one reading, for the calendar dots.
-    func daysWithData(inMonthOf date: Date) async throws -> Set<Date> {
-        let calendar = Calendar.current
-        guard let interval = calendar.dateInterval(of: .month, for: date) else { return [] }
-        return try await client.daysWithData(in: interval, deviceID: preferences.selectedDeviceID)
-    }
 }
 
-// MARK: - Convenience for previews
+// MARK: - Previews
 
 extension AuraStore {
-    /// An in-memory store filled with plausible data, for SwiftUI previews and screenshots.
+    /// An in-memory store filled with plausible data, for SwiftUI previews.
     static func preview() -> AuraStore {
         let store = AuraStore()
         store.phase = .ready
-        store.apply(readings: Reading.sampleSeries())
-        store.lastUpdated = Date()
-        store.isLiveConnected = true
+        store.readings = Reading.sampleSeries()
         store.accountEmail = "you@example.com"
         return store
     }

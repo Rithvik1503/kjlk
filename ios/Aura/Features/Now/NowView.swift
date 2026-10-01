@@ -1,316 +1,196 @@
 import SwiftUI
 
-/// The dashboard: what the room is like right now, and how it got here.
+/// The whole app, more or less: one card, for one day.
 ///
-/// Reading order is deliberate — the verdict first, then the number behind it, then the scale
-/// that makes the number mean something, then the supporting sensors, then the trend.
+/// The date stepper and the settings button live in the navigation bar rather than in a
+/// hand-rolled header, so they get the system's own treatment — which on iOS 26 means Liquid
+/// Glass, for free and without a single version check.
 struct NowView: View {
     @EnvironmentObject private var store: AuraStore
 
-    @State private var chartMetric: MetricKind = .co2
-    @State private var detailMetric: MetricKind?
-
-    private var latest: Reading? { store.latest }
+    @State private var showingSettings = false
+    @State private var showingInfo = false
+    @State private var showingDatePicker = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: Metrics.cardSpacing) {
-                header
-                heroCard
-                tiles
-                trendCard
-                rangeCards
-            }
-            .padding(.horizontal, Metrics.screenPadding)
-            .padding(.top, 8)
-            // Clears the floating tab bar.
-            .padding(.bottom, 110)
-        }
-        .scrollIndicators(.hidden)
-        .refreshable { await store.refresh() }
-        .sheet(item: $detailMetric) { metric in
-            MetricDetailView(metric: metric)
-                .environmentObject(store)
-        }
-        .overlay(alignment: .top) {
-            if let message = store.errorMessage {
-                ErrorBanner(message: message) { store.dismissError() }
-                    .padding(.horizontal, Metrics.screenPadding)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .animation(Motion.snappy, value: store.errorMessage)
-    }
+        NavigationStack {
+            ZStack {
+                AuraBackground(tint: store.tint)
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(greeting)
-                    .font(.auraLabel)
-                    .foregroundStyle(Color.auraSecondaryText)
-
-                Text(store.preferences.selectedDeviceID ?? "Room monitor")
-                    .font(.auraDisplay(26, weight: .bold))
-                    .foregroundStyle(Color.auraPrimaryText)
-            }
-
-            Spacer(minLength: 8)
-
-            HStack(spacing: 6) {
-                LiveDot(isLive: store.isLiveConnected)
-
-                Text(store.isLiveConnected ? "Live" : "Polling")
-                    .font(.auraCaption)
-                    .foregroundStyle(Color.auraSecondaryText)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(Color.auraSurface.opacity(0.8)))
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(store.isLiveConnected ? "Live updates connected" : "Polling for updates")
-        }
-        .padding(.top, 4)
-    }
-
-    private var greeting: String {
-        switch Calendar.current.component(.hour, from: Date()) {
-        case 5..<12: "Good morning"
-        case 12..<18: "Good afternoon"
-        case 18..<22: "Good evening"
-        default: "Tonight"
-        }
-    }
-
-    // MARK: - Hero
-
-    private var heroCard: some View {
-        let scale = store.preferences.scale(for: .co2)
-        let status = store.status
-
-        return GlassCard(tint: status.tint, padding: 22) {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Image(systemName: statusSymbol(for: status.score))
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(status.tint)
-
-                        Text(status.headline)
-                            .font(.auraDisplay(19, weight: .semibold))
-                            .foregroundStyle(Color.auraPrimaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer(minLength: 12)
-
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(scale.format(scale.convert(latest?.co2)))
-                            .font(.auraNumeral(58, weight: .bold))
-                            .foregroundStyle(Color.auraPrimaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
-                            .contentTransition(.numericText())
-                            .auraAnimation(Motion.value, value: latest?.co2)
-
-                        Text("CO₂ ppm")
-                            .font(.auraLabel)
-                            .foregroundStyle(Color.auraSecondaryText)
-
-                        Text(freshnessText)
-                            .font(.auraCaption)
-                            .foregroundStyle(store.isStale ? Color.auraAmber : Color.auraTertiaryText)
-                    }
-                }
-
-                ScaleBar(value: latest?.co2, scale: scale)
-
-                Text(status.detail)
-                    .font(.auraLabel)
-                    .foregroundStyle(Color.auraSecondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    private func statusSymbol(for score: Double) -> String {
-        switch score {
-        case 85...: "hand.thumbsup.fill"
-        case 70..<85: "checkmark.seal.fill"
-        case 50..<70: "wind"
-        default: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var freshnessText: String {
-        guard let latest else { return "No readings yet" }
-        let relative = RelativeTime.string(for: latest.recordedAt)
-        return store.isStale ? "Last seen \(relative)" : "Updated \(relative)"
-    }
-
-    // MARK: - Supporting sensors
-
-    private var tiles: some View {
-        HStack(spacing: 10) {
-            ForEach([MetricKind.temperature, .humidity, .light]) { metric in
-                MetricTile(
-                    metric: metric,
-                    value: latest?.value(for: metric),
-                    scale: store.preferences.scale(for: metric),
-                    trend: sparklineValues(for: metric),
-                    onInfo: { detailMetric = metric }
-                )
-            }
-        }
-    }
-
-    /// The tail of the series, thinned to a readable number of points for a 70pt-wide tile.
-    private func sparklineValues(for metric: MetricKind) -> [Double] {
-        let values = store.readings.compactMap { $0.value(for: metric) }
-        guard values.count > 2 else { return [] }
-
-        let wanted = 32
-        guard values.count > wanted else { return values }
-
-        let stride = Double(values.count) / Double(wanted)
-        return (0..<wanted).map { values[min(Int(Double($0) * stride), values.count - 1)] }
-    }
-
-    // MARK: - Trend
-
-    private var trendCard: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 16) {
-                SegmentedPills(
-                    items: TimeRange.allCases,
-                    selection: Binding(
-                        get: { store.range },
-                        set: { store.range = $0 }
-                    ),
-                    title: { $0.title },
-                    symbol: { $0.symbol }
-                )
-
-                metricPicker
-
-                TrendChart(
-                    points: store.trend(for: chartMetric),
-                    scale: store.preferences.scale(for: chartMetric),
-                    range: store.range,
-                    style: store.range == .month ? .bars : .area,
-                    height: 190
-                )
-
-                if store.isRefreshing {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini)
-                        Text("Refreshing")
-                            .font(.auraCaption)
-                            .foregroundStyle(Color.auraTertiaryText)
-                    }
-                }
-            }
-        }
-    }
-
-    private var metricPicker: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                ForEach(MetricKind.allCases) { metric in
-                    let isSelected = metric == chartMetric
-                    let tint = store.preferences
-                        .scale(for: metric)
-                        .tint(for: store.preferences.scale(for: metric).convert(latest?.value(for: metric)))
-
-                    Button {
-                        Haptics.selection()
-                        withAnimation(Motion.snappy) { chartMetric = metric }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: metric.symbol)
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(metric.shortTitle)
-                                .font(.auraLabel)
-                        }
-                        .foregroundStyle(isSelected ? Color.auraVoid : Color.auraSecondaryText)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule().fill(isSelected ? tint : Color.auraSurfaceRaised)
+                ScrollView {
+                    VStack(spacing: 16) {
+                        CO2Card(
+                            value: store.headlineCO2,
+                            verdict: verdict,
+                            tint: store.tint,
+                            footnote: footnote,
+                            footnoteDirection: footnoteDirection,
+                            onInfo: { showingInfo = true }
                         )
+
+                        if let message = store.errorMessage {
+                            errorRow(message)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
                 }
+                .scrollIndicators(.hidden)
+                .refreshable { await store.loadSelectedDay() }
             }
-            .padding(.vertical, 1)
+            .navigationTitle(navigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbarContent }
         }
-        .scrollIndicators(.hidden)
-    }
-
-    // MARK: - Ranges
-
-    private var rangeCards: some View {
-        VStack(spacing: Metrics.cardSpacing) {
-            ForEach(MetricKind.allCases) { metric in
-                if let summary = store.summaries[metric] {
-                    MetricRangeCard(
-                        summary: summary,
-                        scale: store.preferences.scale(for: metric),
-                        rangeTitle: store.range.title,
-                        lastReadingAt: latest?.recordedAt
-                    )
-                    .onTapGesture { detailMetric = metric }
-                }
-            }
+        .task(id: store.selectedDate) { await store.loadSelectedDay() }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView().environmentObject(store)
+        }
+        .sheet(isPresented: $showingInfo) {
+            MetricInfoSheet(metric: .co2)
+        }
+        .sheet(isPresented: $showingDatePicker) {
+            DayPickerSheet(selection: $store.selectedDate)
         }
     }
-}
 
-/// A dismissible red bar for transient failures — a dropped refresh shouldn't blank the screen.
-struct ErrorBanner: View {
-    let message: String
-    let onDismiss: () -> Void
+    // MARK: - Toolbar
 
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(Color.auraRed)
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                store.step(days: -1)
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .accessibilityLabel("Previous day")
+        }
+
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                store.step(days: 1)
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .disabled(!store.canGoForward)
+            .accessibilityLabel("Next day")
+
+            Button {
+                showingDatePicker = true
+            } label: {
+                Image(systemName: "calendar")
+            }
+            .accessibilityLabel("Choose a date")
+
+            Button {
+                showingSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .accessibilityLabel("Settings")
+        }
+    }
+
+    // MARK: - Copy
+
+    private var navigationTitle: String {
+        if store.isViewingToday { return "Today" }
+        if Calendar.current.isDateInYesterday(store.selectedDate) { return "Yesterday" }
+        return store.selectedDate.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+
+    private var verdict: String {
+        store.band?.label ?? "No reading"
+    }
+
+    /// Today gets the last hour's change; a past day gets its shape instead, since "the last
+    /// hour" is meaningless once the day is over.
+    private var footnote: String? {
+        guard !store.readings.isEmpty else {
+            return store.isLoading ? nil : "Nothing recorded on this day"
+        }
+
+        if store.isViewingToday {
+            if let change = store.hourlyChange, abs(change) >= 10 {
+                let amount = MetricKind.co2.format(abs(change))
+                return "\(amount) ppm in the last hour"
+            }
+            if let recordedAt = store.current?.recordedAt {
+                return "Updated \(recordedAt.formatted(.relative(presentation: .numeric)))"
+            }
+            return nil
+        }
+
+        guard let peak = store.peakCO2 else { return nil }
+        let count = store.readings.count
+        return "Peak \(MetricKind.co2.format(peak)) ppm · \(count) readings"
+    }
+
+    private var footnoteDirection: CO2Card.ChangeDirection? {
+        guard store.isViewingToday, let change = store.hourlyChange, abs(change) >= 10 else {
+            return nil
+        }
+        return change > 0 ? .up : .down
+    }
+
+    private func errorRow(_ message: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
 
             Text(message)
-                .font(.auraLabel)
-                .foregroundStyle(Color.auraPrimaryText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 4)
 
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Color.auraSecondaryText)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss")
+            Button("Dismiss") { store.dismissError() }
+                .font(.footnote)
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.auraSurfaceRaised)
-                .shadow(color: .black.opacity(0.4), radius: 14, y: 6)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color.auraSurface)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.auraRed.opacity(0.35), lineWidth: 1)
-        )
+    }
+}
+
+/// A plain system date picker in a sheet. Nothing to customise — it already does the job.
+struct DayPickerSheet: View {
+    @Binding var selection: Date
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            DatePicker(
+                "Date",
+                selection: $selection,
+                in: ...Date(),
+                displayedComponents: .date
+            )
+            .datePickerStyle(.graphical)
+            .padding(.horizontal)
+            .navigationTitle("Choose a date")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Today") { selection = Date() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 
 #Preview("Now") {
     NowView()
         .environmentObject(AuraStore.preview())
-        .background(Color.auraBase)
         .preferredColorScheme(.dark)
 }

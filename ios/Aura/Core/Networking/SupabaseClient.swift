@@ -199,18 +199,6 @@ actor SupabaseClient {
         return rows.map(\.deviceID)
     }
 
-    /// Days in `month` that have at least one reading, so the calendar can dot them.
-    func daysWithData(in month: DateInterval, deviceID: String?) async throws -> Set<Date> {
-        let readings = try await readings(
-            from: month.start,
-            to: month.end,
-            deviceID: deviceID,
-            limit: 20000
-        )
-        let calendar = Calendar.current
-        return Set(readings.map { calendar.startOfDay(for: $0.recordedAt) })
-    }
-
     private static let readingColumns =
         "id,device_id,recorded_at,co2_ppm,temperature_c,humidity_percent,light_lux"
 

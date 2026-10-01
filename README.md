@@ -148,34 +148,38 @@ Fill it in — it's gitignored, and the app picks it up as a default.
 
 ### What's in it
 
-**Now.** The verdict first — a 0–100 comfort score weighted toward CO₂, because that's the
-metric that moves fastest and the one you can do something about. The background colour tracks
-it, so the screen reads before the numbers do. Then the CO₂ reading against a full-spectrum
-scale, tiles for the other three sensors with sparklines, an interactive chart over 6h / 24h /
-7d / 30d, and a range bar per metric showing low, average and peak with the current value
-floating where it falls.
+One screen, one card. The CO₂ reading for a single day, with a quality verdict above it
+("Fresh", "Comfortable", "Stuffy", "Poor", "Bad", "Severe") and a dense dotted indicator
+showing where it falls on the 400–2000 ppm scale. Each lit dot is coloured by the value at
+*its own* position, so the filled run is a slice of the scale's own ramp rather than a flat
+block. The background glow follows the band, so the screen reads before the number does.
 
-**History.** A calendar with a dot under every day that has readings. Pick one and you get a
-day score, a scrubbed chart, per-metric breakdowns, and a CSV export in the units you're
-viewing.
+The navigation bar holds a date stepper (‹ ›, plus a calendar button for a full picker) and
+a settings button. Stepping back a day shows that day's **average** rather than its last
+reading — a past day has no "now", and whatever it happened to end on at 3am is a worse
+answer to "what was it like in here".
 
-**Settings.** °C/°F, a temperature calibration offset (the SCD40 sits in its own case and reads
-warm — compare against a thermometer you trust and nudge it), device picker, live updates
-toggle, and a calm-background switch.
+The footer line changes with context: today shows the last hour's movement, a past day shows
+its peak and reading count.
+
+Settings is a sheet: monitor picker, account, sign out, disconnect.
 
 ### Notes on how it's built
 
+- **System controls throughout.** Navigation bar, toolbar buttons, `Form`, `List`, `Picker`,
+  `DatePicker`, `confirmationDialog`. Nothing is a hand-rolled lookalike, which is also why
+  the toolbar picks up Liquid Glass on iOS 26 without a single availability check.
+- **No tab bar.** With history gone and settings in the header there is one destination, and
+  a single-item tab bar renders as a stub. `RootView` switches on a phase instead.
 - **No dependencies.** Auth, PostgREST and Realtime are a few hundred lines of `URLSession`.
-  Nothing to resolve, nothing to break on a Swift version bump.
-- **Live updates over Realtime**, with polling as a safety net underneath — the socket is an
-  optimisation, never a requirement, so the app is correct even if it never connects.
-- **Units convert in exactly one place.** All physics stays in SI; `DisplayScale` is the only
-  type that knows how a stored value becomes something on screen. Switching to Fahrenheit moves
-  the chart axis, the band thresholds, the comfort shading and the CSV together.
-- **Opens with data.** The last readings are cached to disk, so the first frame is never a
+- **Live updates are silent.** New rows arrive over Realtime and simply appear, with polling
+  underneath as a safety net. Nothing in the UI reports on the state of the connection.
+- **Opens with data.** Today's readings are cached to disk, so the first frame is never a
   spinner.
-- **Gaps stay gaps.** A failed sensor decodes to `nil` and draws as a break in the line. Nothing
-  is ever silently zero-filled.
+- **Gaps stay gaps.** A failed sensor decodes to `nil` and is skipped. Nothing is zero-filled.
+
+Temperature, humidity and light are still fetched, decoded and banded — they're just not
+surfaced. Adding them back is a view, not a schema change.
 
 ---
 
