@@ -1,8 +1,6 @@
 import SwiftUI
 
 /// Decides what the app shows: setup, sign-in, or the day.
-///
-/// There is no tab bar — settings is a sheet from the header, and there is nowhere else to go.
 struct RootView: View {
     @EnvironmentObject private var store: AuraStore
     @Environment(\.scenePhase) private var scenePhase
@@ -20,7 +18,7 @@ struct RootView: View {
                 SignInView()
 
             case .ready:
-                NowView()
+                HomeTabView()
             }
         }
         .preferredColorScheme(.dark)
@@ -32,6 +30,22 @@ struct RootView: View {
             case .background: store.handleBackground()
             default: break
             }
+        }
+    }
+}
+
+/// The system tab bar.
+///
+/// Home is the only destination — settings is a sheet from the header, and there is nowhere
+/// else to go yet. Using `TabView` rather than a hand-rolled bar means it picks up Liquid
+/// Glass on iOS 26, and a second tab is one `.tabItem` away.
+struct HomeTabView: View {
+    var body: some View {
+        TabView {
+            NowView()
+                .tabItem {
+                    Label("Home", systemImage: "house.fill")
+                }
         }
     }
 }

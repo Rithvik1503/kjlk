@@ -148,29 +148,33 @@ Fill it in — it's gitignored, and the app picks it up as a default.
 
 ### What's in it
 
-One screen, one card. The CO₂ reading for a single day, with a quality verdict above it
-("Fresh", "Comfortable", "Stuffy", "Poor", "Bad", "Severe") and a dense dotted indicator
-showing where it falls on the 400–2000 ppm scale. Each lit dot is coloured by the value at
-*its own* position, so the filled run is a slice of the scale's own ramp rather than a flat
-block. The background glow follows the band, so the screen reads before the number does.
+One screen — **Home** — behind a system tab bar. A single card shows the CO₂ reading for one
+day: a quality verdict ("Fresh", "Comfortable", "Stuffy", "Poor", "Bad", "Severe") with a
+colour dot, the change over the last hour on the right, the number, and a dot-matrix level
+indicator underneath.
 
-The navigation bar holds a date stepper (‹ ›, plus a calendar button for a full picker) and
-a settings button. Stepping back a day shows that day's **average** rather than its last
-reading — a past day has no "now", and whatever it happened to end on at 3am is a worse
-answer to "what was it like in here".
+Each lit column of the matrix takes the band colour at *its own* position on the 400–2000 ppm
+scale, so the lit run is a slice of the scale's ramp rather than a flat block, and every lit
+cell blooms slightly so the grid reads as an emissive panel. The background glow follows the
+band, so the screen reads before the number does.
 
-The footer line changes with context: today shows the last hour's movement, a past day shows
-its peak and reading count.
+The navigation bar holds a settings button on the left, and on the right a day stepper
+(‹ ›) with a date button between them that opens a graphical `DatePicker` in a popover.
+
+Stepping back a day shows that day's **average** rather than its last reading — a past day has
+no "now", and whatever it happened to end on at 3am is a worse answer to "what was it like in
+here". The line on the right adapts too: today shows the last hour's movement, a past day
+shows its peak.
 
 Settings is a sheet: monitor picker, account, sign out, disconnect.
 
 ### Notes on how it's built
 
-- **System controls throughout.** Navigation bar, toolbar buttons, `Form`, `List`, `Picker`,
-  `DatePicker`, `confirmationDialog`. Nothing is a hand-rolled lookalike, which is also why
-  the toolbar picks up Liquid Glass on iOS 26 without a single availability check.
-- **No tab bar.** With history gone and settings in the header there is one destination, and
-  a single-item tab bar renders as a stub. `RootView` switches on a phase instead.
+- **System controls throughout.** `TabView`, navigation bar, toolbar buttons, `Form`, `List`,
+  `Picker`, `DatePicker`, `confirmationDialog`. Nothing is a hand-rolled lookalike, which is
+  also why the tab bar and toolbar pick up Liquid Glass on iOS 26 without a single
+  availability check — there is no iOS 26-only API in the codebase.
+- **Home is the only tab** for now; a second one is one `.tabItem` away.
 - **No dependencies.** Auth, PostgREST and Realtime are a few hundred lines of `URLSession`.
 - **Live updates are silent.** New rows arrive over Realtime and simply appear, with polling
   underneath as a safety net. Nothing in the UI reports on the state of the connection.

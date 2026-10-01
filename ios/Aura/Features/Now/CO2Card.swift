@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The one card: how the air is right now, in four lines.
+/// The one card: how the air is right now, in three rows.
 ///
-/// Reads top to bottom as verdict → number → level → what changed, which is the order you'd
-/// answer "how's the air in here" out loud.
+/// Verdict and change sit on the same line, the number carries the card, and the matrix
+/// underneath says where that number falls without needing an axis.
 struct CO2Card: View {
     let value: Double?
     /// Quality word above the number — "Fresh", "Comfortable", "Stuffy".
@@ -12,7 +12,6 @@ struct CO2Card: View {
     let footnote: String?
     /// Direction of `footnote`, when it describes a change. nil draws no arrow.
     let footnoteDirection: ChangeDirection?
-    let onInfo: () -> Void
 
     enum ChangeDirection {
         case up
@@ -35,52 +34,64 @@ struct CO2Card: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 16) {
             header
             reading
-            DottedBar(metric: .co2, value: value)
-            footer
+            DotMatrixBar(metric: .co2, value: value)
         }
-        .padding(24)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .fill(Color.auraSurface)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.auraCard)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.45), radius: 28, y: 14)
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(verdict)
-                .font(.title2.weight(.semibold))
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(Color.auraPrimaryText)
 
             Circle()
                 .fill(tint)
-                .frame(width: 9, height: 9)
+                .frame(width: 8, height: 8)
+                // Baseline alignment would hang a bare circle off the text baseline.
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 10)
 
-            Button(action: onInfo) {
-                Image(systemName: "info.circle")
-            }
-            .buttonStyle(.plain)
-            .font(.title3)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("About carbon dioxide")
+            change
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var change: some View {
+        if let footnote {
+            HStack(spacing: 4) {
+                if let footnoteDirection {
+                    Image(systemName: footnoteDirection.symbol)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(footnoteDirection.tint)
+                }
+
+                Text(footnote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 
     private var reading: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
             Text(MetricKind.co2.format(value))
-                .font(.system(size: 56, weight: .bold, design: .default))
+                .font(.system(size: 46, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(Color.auraPrimaryText)
                 .contentTransition(.numericText())
@@ -89,8 +100,8 @@ struct CO2Card: View {
                 .minimumScaleFactor(0.5)
 
             Text(MetricKind.co2.captionedUnit)
-                .font(.title3.weight(.medium))
-                .foregroundStyle(.secondary)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.tertiary)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Carbon dioxide")
@@ -98,44 +109,24 @@ struct CO2Card: View {
             value.map { "\(MetricKind.co2.format($0)) parts per million" } ?? "No reading"
         )
     }
-
-    @ViewBuilder
-    private var footer: some View {
-        if let footnote {
-            HStack(spacing: 6) {
-                if let footnoteDirection {
-                    Image(systemName: footnoteDirection.symbol)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(footnoteDirection.tint)
-                }
-
-                Text(footnote)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .combine)
-        }
-    }
 }
 
 #Preview("Card") {
-    VStack(spacing: 20) {
+    VStack(spacing: 16) {
         CO2Card(
             value: 712,
             verdict: "Comfortable",
             tint: .auraLime,
             footnote: "64 ppm in the last hour",
-            footnoteDirection: .up,
-            onInfo: {}
+            footnoteDirection: .up
         )
 
         CO2Card(
             value: 1480,
             verdict: "Poor",
             tint: .auraOrange,
-            footnote: "Peak 1,620 ppm · 284 readings",
-            footnoteDirection: nil,
-            onInfo: {}
+            footnote: "Peak 1,620 ppm",
+            footnoteDirection: nil
         )
 
         CO2Card(
@@ -143,8 +134,7 @@ struct CO2Card: View {
             verdict: "No reading",
             tint: .auraSlate,
             footnote: nil,
-            footnoteDirection: nil,
-            onInfo: {}
+            footnoteDirection: nil
         )
     }
     .padding(20)

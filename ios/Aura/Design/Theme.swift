@@ -10,6 +10,10 @@ extension Color {
     static let auraVoid = Color(hex: 0x070709)
     static let auraBase = Color(hex: 0x0D0E12)
     static let auraSurface = Color(hex: 0x15171D)
+    /// The card. Near-black, so the lit dots carry the whole card.
+    static let auraCard = Color(hex: 0x0D0D0D)
+    /// An unlit cell of the dot matrix.
+    static let auraDotOff = Color(hex: 0x1C1F26)
     static let auraHairline = Color(hex: 0x2A2E37)
 
     static let auraPrimaryText = Color(hex: 0xF5F6F8)
