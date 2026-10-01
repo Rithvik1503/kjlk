@@ -247,8 +247,14 @@ table. Check with `select owner_id, count(*) from readings group by 1;`.
 but if you created the table afterwards, re-run that block. The app polls regardless, so this
 costs freshness, not data.
 
-**Device uploads 401.** The token in `secrets.h` doesn't match `DEVICE_INGEST_TOKEN`. Note that
-the function reads the secret at request time — no redeploy needed after changing it.
+**Device uploads 401.** The token in `secrets.h` doesn't match `DEVICE_INGEST_TOKEN`. After
+changing the secret, give it a minute: the function reads it when its isolate boots, so an
+already-warm one can serve the old value for a short while. If 401s outlast that, redeploy with
+`supabase functions deploy ingest-reading --no-verify-jwt` to force a fresh isolate.
+
+**Lost the token.** It can't be read back — the dashboard only stores a digest. Generate a new
+one with `openssl rand -hex 32`, set it as `DEVICE_INGEST_TOKEN`, put the same value in
+`secrets.h` and re-flash. Nothing else depends on it, so rotating costs only the reflash.
 
 **Device uploads 400.** The payload had no usable values, or a reading was outside the plausible
 range in the check constraint. The serial log prints the response body.
