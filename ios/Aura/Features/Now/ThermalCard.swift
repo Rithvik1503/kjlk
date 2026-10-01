@@ -12,17 +12,20 @@ struct ThermalCard: View {
     let dayAverage: Double?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 26) {
+        HStack(alignment: .top, spacing: 16) {
             figure
+
+            // Pushed to the trailing edge rather than trailing the figure, so the row reads
+            // as the number on one side and its context on the other.
+            Spacer(minLength: 12)
 
             Text(averageText)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
                 // Sits against the lower half of the figure rather than its cap height, so
                 // the pair reads as one block instead of two things starting at once.
                 .padding(.top, 36)
-
-            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
