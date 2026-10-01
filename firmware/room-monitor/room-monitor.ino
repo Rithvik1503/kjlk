@@ -363,12 +363,18 @@ static bool flushBuffer() {
     Serial.print(" — ");
     Serial.println(http.getString());
 
-    // 2xx means stored. A 4xx means the server will never accept these rows, so drop them
-    // rather than retrying the same rejected payload forever.
     if (responseCode >= 200 && responseCode < 300) {
       accepted = true;
+    } else if (responseCode == 401 || responseCode == 403) {
+      // The payload is fine; the device isn't allowed in. That gets fixed by correcting
+      // DEVICE_TOKEN, and the readings are still good when it is — so keep buffering them
+      // rather than throwing away everything recorded while the token was wrong.
+      Serial.println("Rejected: check DEVICE_TOKEN matches DEVICE_INGEST_TOKEN. Readings kept.");
     } else if (responseCode >= 400 && responseCode < 500 && responseCode != 408 && responseCode != 429) {
-      Serial.println("Server rejected these readings; discarding them.");
+      // Genuinely malformed or unacceptable — retrying the same bytes would fail forever.
+      Serial.print("Server rejected these readings (");
+      Serial.print(responseCode);
+      Serial.println("); discarding them.");
       accepted = true;
     }
   } else {
