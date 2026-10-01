@@ -11,8 +11,8 @@ actor SupabaseClient {
     private let urlSession: URLSession
     private var refreshTask: Task<SupabaseSession, any Error>?
 
-    private static let configKey = "supabase.config"
-    private static let sessionKey = "supabase.session"
+    private static let configKey = SharedKeys.config
+    private static let sessionKey = SharedKeys.session
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
@@ -24,8 +24,12 @@ actor SupabaseClient {
     func restore() {
         if let saved = Keychain.decode(SupabaseConfig.self, for: Self.configKey) {
             config = saved
-        } else {
-            config = SupabaseConfig.bundled
+        } else if let bundled = SupabaseConfig.bundled {
+            // Persisted rather than just held: `Config.plist` ships in the app bundle, and the
+            // widget extension is a bundle of its own that can't see it. The keychain is the
+            // one place both processes read.
+            config = bundled
+            Keychain.encode(bundled, for: Self.configKey)
         }
         session = Keychain.decode(SupabaseSession.self, for: Self.sessionKey)
     }

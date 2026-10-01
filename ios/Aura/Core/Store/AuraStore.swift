@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import WidgetKit
 
 /// The one object the UI observes.
 ///
@@ -245,6 +246,13 @@ final class AuraStore: ObservableObject {
             readings = fetched
             errorMessage = nil
 
+            // The widget fetches for itself, but it is budgeted to a handful of refreshes an
+            // hour. Nudging it whenever the app has fresh numbers keeps the two in step while
+            // the app is open, at no cost to that budget.
+            if calendar.isDateInToday(day) {
+                WidgetCenter.shared.reloadAllTimelines()
+            }
+
             await refreshDeviceList()
             await refreshFirstReadingDate()
 
@@ -346,6 +354,9 @@ final class AuraStore: ObservableObject {
         devices = []
         errorMessage = nil
         accountEmail = nil
+        // The widget reads the same keychain; signing out has just emptied it, and it should
+        // say so rather than keep showing the last numbers it had.
+        WidgetCenter.shared.reloadAllTimelines()
         firstReadingAt = nil
         selectedDate = Date()
         phase = .needsSignIn

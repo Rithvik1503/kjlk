@@ -1,4 +1,5 @@
 import Foundation
+import WidgetKit
 
 /// User choices. Settings, not data.
 ///
@@ -9,7 +10,13 @@ import Foundation
 final class Preferences: ObservableObject {
     /// Which monitor to show, or nil for whichever reported most recently.
     @Published var selectedDeviceID: String? {
-        didSet { store.set(selectedDeviceID, forKey: Keys.selectedDevice) }
+        didSet {
+            store.set(selectedDeviceID, forKey: Keys.selectedDevice)
+            // Mirrored into the shared keychain because the widget is a separate process with
+            // its own defaults, and it already reads the keychain for the session.
+            Keychain.setString(selectedDeviceID, for: SharedKeys.selectedDevice)
+            WidgetCenter.shared.reloadAllTimelines()
+        }
     }
 
     /// Whether to post a local notification when a sensor's band gets worse.

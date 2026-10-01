@@ -235,6 +235,38 @@ The scrub gesture is a UIKit pan recogniser that fails itself the moment a touch
 down than across. A SwiftUI `DragGesture` with a zero minimum distance wins against the
 enclosing `ScrollView`, and the page would stop scrolling wherever a chart happened to be.
 
+### Home screen widget
+
+A **Room** widget, large or medium. The room's name across the top with the time of the last
+reading, the temperature as the same thin figure Home leads with, and CO₂, humidity and light
+each over the same dot grid — fewer columns than the app draws, since at widget width the app's
+96 would land below a point apiece and smear into a line.
+
+It is a separate target, `AuraWidgetExtension`, and a separate process, so two things had to be
+shared with it:
+
+- **Code.** `ios/Shared/` holds what both build: the models, the Supabase client, the keychain,
+  the palette and `DotMatrixBar`. The folder is a member of both targets, so adding a file to it
+  needs no project-file edit.
+- **Credentials.** The widget reads the project URL, the anon key and the session from the
+  keychain the app already writes to. Both targets carry a `keychain-access-groups` entitlement
+  naming the same group, and `Keychain` pins its service to a literal rather than the bundle
+  identifier, which differs between them.
+
+**One thing to do in Xcode:** select each target → Signing & Capabilities → set your team. The
+entitlement files are already in `ios/Entitlements/`, so Keychain Sharing comes with them; if
+Xcode complains about the group, add the Keychain Sharing capability on both targets and the
+group `com.aura.roommonitor`.
+
+The widget stores nothing. Each timeline refresh fetches from Supabase, the same promise the app
+makes, and refreshes on its own about every 15 minutes — WidgetKit budgets an extension to a few
+dozen wake-ups a day, so asking more often than that would only get the requests dropped. While
+the app is open it nudges the widget whenever it has fresh numbers, which costs nothing against
+that budget.
+
+If there's no session in the keychain it says so rather than showing stale numbers, and signing
+out in the app reloads it immediately.
+
 ### Notes on how it's built
 
 - **System controls throughout.** `TabView`, navigation bar, toolbar buttons, `Form`, `List`,
