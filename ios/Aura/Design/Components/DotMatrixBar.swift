@@ -12,9 +12,9 @@ struct DotMatrixBar: View {
     let value: Double?
 
     var columns: Int = 46
-    var rows: Int = 4
+    var rows: Int = 12
     var cellSize: CGFloat = 3
-    var rowSpacing: CGFloat = 2
+    var rowSpacing: CGFloat = 1.5
     var cornerRadius: CGFloat = 0.75
 
     private var litColumns: Int {

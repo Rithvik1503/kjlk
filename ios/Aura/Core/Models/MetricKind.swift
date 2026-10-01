@@ -21,6 +21,16 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// Column heading in the sensor row.
+    var shortTitle: String {
+        switch self {
+        case .co2: "CO₂"
+        case .temperature: "Temp"
+        case .humidity: "Humidity"
+        case .light: "Light"
+        }
+    }
+
     var unit: String {
         switch self {
         case .co2: "ppm"

@@ -27,7 +27,7 @@ struct CO2Card: View {
     private var reading: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(MetricKind.co2.format(value))
-                .font(.system(size: 36, weight: .bold))
+                .font(.system(size: 9, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(Color.auraPrimaryText)
                 .contentTransition(.numericText())
@@ -36,7 +36,8 @@ struct CO2Card: View {
                 .minimumScaleFactor(0.5)
 
             Text(MetricKind.co2.captionedUnit)
-                .font(.caption2.weight(.medium))
+                // Kept below the figure's 9pt so the unit still reads as secondary to it.
+                .font(.system(size: 7, weight: .medium))
                 .foregroundStyle(.tertiary)
         }
         .accessibilityElement(children: .ignore)

@@ -71,19 +71,26 @@ final class AuraStore: ObservableObject {
     /// Most recent reading of the selected day.
     var current: Reading? { readings.last }
 
-    /// The headline figure: the latest reading today, or the day's average for a past day.
+    /// The figure to show for a metric: the latest reading today, or the day's average for
+    /// a past day.
     ///
     /// A past day has no "now", and its last reading — often taken at 3am — is a worse answer
     /// to "what was it like in here" than the average of the whole day.
-    var headlineCO2: Double? {
-        isViewingToday ? current?.co2 : averageCO2
+    /// Today resolves per metric rather than from one row, because the sensors fail
+    /// independently — a dropped BH1750 read shouldn't blank the light figure while the
+    /// SCD40 in the same row is reporting fine.
+    func value(for metric: MetricKind) -> Double? {
+        guard isViewingToday else { return average(of: metric) }
+        return readings.reversed().lazy.compactMap { $0.value(for: metric) }.first
     }
 
-    var averageCO2: Double? {
-        let values = readings.compactMap(\.co2)
+    private func average(of metric: MetricKind) -> Double? {
+        let values = readings.compactMap { $0.value(for: metric) }
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
     }
+
+    var headlineCO2: Double? { value(for: .co2) }
 
     var tint: Color {
         MetricKind.co2.tint(for: headlineCO2)
