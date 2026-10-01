@@ -11,11 +11,11 @@ struct DotMatrixBar: View {
     /// Raw value, or nil when there is no reading — which leaves the whole grid dark.
     let value: Double?
 
-    var columns: Int = 30
+    var columns: Int = 46
     var rows: Int = 4
-    var cellSize: CGFloat = 5
-    var rowSpacing: CGFloat = 3
-    var cornerRadius: CGFloat = 1.5
+    var cellSize: CGFloat = 3
+    var rowSpacing: CGFloat = 2
+    var cornerRadius: CGFloat = 0.75
 
     private var litColumns: Int {
         guard let value else { return 0 }
@@ -55,7 +55,7 @@ struct DotMatrixBar: View {
         return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .fill(isLit ? tint : Color.auraDotOff)
             .frame(width: cellSize, height: cellSize)
-            .shadow(color: isLit ? tint.opacity(0.75) : .clear, radius: 3)
+            .shadow(color: isLit ? tint.opacity(0.75) : .clear, radius: 2)
     }
 
     /// The band colour at this column's own position along the scale.

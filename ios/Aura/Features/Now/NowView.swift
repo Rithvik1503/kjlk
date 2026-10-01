@@ -18,13 +18,7 @@ struct NowView: View {
 
                 ScrollView {
                     VStack(spacing: 16) {
-                        CO2Card(
-                            value: store.headlineCO2,
-                            verdict: verdict,
-                            tint: store.tint,
-                            footnote: footnote,
-                            footnoteDirection: footnoteDirection
-                        )
+                        CO2Card(value: store.headlineCO2)
 
                         if let message = store.errorMessage {
                             errorRow(message)
@@ -109,38 +103,6 @@ struct NowView: View {
 
     private var dateLabel: String {
         store.selectedDate.formatted(.dateTime.day().month(.abbreviated))
-    }
-
-    private var verdict: String {
-        store.band?.label ?? "No reading"
-    }
-
-    /// Today gets the last hour's change; a past day gets its peak instead, since "the last
-    /// hour" is meaningless once the day is over.
-    private var footnote: String? {
-        guard !store.readings.isEmpty else {
-            return store.isLoading ? nil : "Nothing recorded"
-        }
-
-        if store.isViewingToday {
-            if let change = store.hourlyChange, abs(change) >= 10 {
-                return "\(MetricKind.co2.format(abs(change))) ppm in the last hour"
-            }
-            if let recordedAt = store.current?.recordedAt {
-                return "Updated \(recordedAt.formatted(.relative(presentation: .numeric)))"
-            }
-            return nil
-        }
-
-        guard let peak = store.peakCO2 else { return nil }
-        return "Peak \(MetricKind.co2.format(peak)) ppm"
-    }
-
-    private var footnoteDirection: CO2Card.ChangeDirection? {
-        guard store.isViewingToday, let change = store.hourlyChange, abs(change) >= 10 else {
-            return nil
-        }
-        return change > 0 ? .up : .down
     }
 
     private func errorRow(_ message: String) -> some View {

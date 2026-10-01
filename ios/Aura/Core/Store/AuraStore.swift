@@ -19,7 +19,6 @@ final class AuraStore: ObservableObject {
 
     @Published private(set) var phase: Phase = .launching
     @Published private(set) var readings: [Reading] = []
-    @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var devices: [String] = []
     @Published var accountEmail: String?
@@ -86,30 +85,8 @@ final class AuraStore: ObservableObject {
         return values.reduce(0, +) / Double(values.count)
     }
 
-    var peakCO2: Double? {
-        readings.compactMap(\.co2).max()
-    }
-
-    var band: MetricBand? {
-        headlineCO2.map { MetricKind.co2.band(for: $0) }
-    }
-
     var tint: Color {
         MetricKind.co2.tint(for: headlineCO2)
-    }
-
-    /// Change over the last hour, for today's footer line.
-    var hourlyChange: Double? {
-        guard isViewingToday, let latest = current?.co2 else { return nil }
-
-        let cutoff = Date().addingTimeInterval(-3600)
-        // The reading closest to an hour ago, as long as something that old exists.
-        guard
-            let reference = readings.last(where: { $0.recordedAt <= cutoff })?.co2,
-            readings.count > 1
-        else { return nil }
-
-        return latest - reference
     }
 
     var canGoForward: Bool {
@@ -181,12 +158,15 @@ final class AuraStore: ObservableObject {
     private func performLoad() async {
         guard phase == .ready else { return }
 
-        isLoading = true
-        defer { isLoading = false }
-
         let day = selectedDate
         let start = calendar.startOfDay(for: day)
         guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return }
+
+        // Drop readings from a different day before fetching, so stepping the date never shows
+        // one day's number sitting under another day's label while the request is in flight.
+        if let first = readings.first, !calendar.isDate(first.recordedAt, inSameDayAs: day) {
+            readings = []
+        }
 
         do {
             let fetched = try await client.readings(
