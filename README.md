@@ -193,8 +193,9 @@ all four rows. Stepping the header moves a whole window at a time, since the poi
 screen is the shape rather than a single reading.
 
 Each row collapses to a title, a dot-matrix preview and the latest value, and expands into its
-own chart — dithered bars for days, a line for months — with a fixed y-axis, the period average,
-and dates along the bottom. Dragging across a chart scrubs it: the bar under your finger stays
+own chart — dithered bars in every window — with a fixed y-axis, the period average, and dates
+along the bottom. The axis row lays its labels out on the bars' own column geometry, from one
+shared gap constant, so a label's centre is always the centre of the column above it. Dragging across a chart scrubs it: the bar under your finger stays
 lit while the rest dim, and the row's value and date follow.
 
 Bars are drawn against a **fixed** axis per metric rather than the window's own minimum and

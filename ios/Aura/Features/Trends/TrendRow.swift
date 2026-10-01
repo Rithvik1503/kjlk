@@ -153,7 +153,6 @@ struct TrendRow: View {
                 HStack(alignment: .top, spacing: 6) {
                     verticalAxis
                     ScrubbableChart(
-                        isLine: window.isMonthly,
                         values: values,
                         axis: axis,
                         height: 150,
@@ -223,8 +222,10 @@ struct TrendRow: View {
         date.map { $0.formatted(.dateTime.day().month(.abbreviated)).uppercased() } ?? ""
     }
 
+    /// Equal cells at the bars' own spacing, so each label's centre lands on the centre of
+    /// the column above it.
     private func evenly(_ labels: [String]) -> some View {
-        HStack(spacing: 3) {
+        HStack(spacing: DitheredBars.gap) {
             ForEach(Array(labels.enumerated()), id: \.offset) { _, label in
                 Text(label)
                     .font(.auraMono(9))

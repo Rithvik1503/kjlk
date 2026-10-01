@@ -89,12 +89,11 @@ private final class HorizontalPanGestureRecognizer: UIPanGestureRecognizer {
     }
 }
 
-/// The dot-matrix bars or the monthly line, with drag-to-scrub over the top.
+/// Dot-matrix bars with drag-to-scrub over the top.
 ///
-/// Dragging moves a vertical highlight to the nearest slot that has data and reports its
-/// index, so the row header can mirror that day's value and date under the finger.
+/// Dragging moves a vertical highlight to the nearest column that has data and reports its
+/// index, so the row header can mirror that slot's value and date under the finger.
 struct ScrubbableChart: View {
-    let isLine: Bool
     let values: [Double?]
     var color: Color = .white
     var axis: (from: Double, to: Double)?
@@ -103,39 +102,32 @@ struct ScrubbableChart: View {
     @Binding var activeIndex: Int?
     let onScrub: (Int) -> Void
 
-    /// Matches `DitheredBars`' own default, so the highlight lands on a bar's centre.
-    private let gap: CGFloat = 3
-
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let count = max(values.count, 1)
 
             ZStack(alignment: .topLeading) {
-                if isLine {
-                    TrendLine(points: values, color: color, height: height, highlightIndex: activeIndex)
-                } else {
-                    DitheredBars(
-                        values: values,
-                        color: color,
-                        height: height,
-                        highlightIndex: activeIndex,
-                        axis: axis
-                    )
-                }
+                DitheredBars(
+                    values: values,
+                    color: color,
+                    height: height,
+                    highlightIndex: activeIndex,
+                    axis: axis
+                )
 
                 if let activeIndex, values.indices.contains(activeIndex) {
                     Rectangle()
                         .fill(color.opacity(0.55))
                         .frame(width: 1, height: height)
-                        .position(x: centreX(activeIndex, count: count, width: width), y: height / 2)
+                        .position(x: Self.centreX(activeIndex, count: count, width: width), y: height / 2)
                 }
             }
             .contentShape(Rectangle())
             .overlay(
                 HorizontalScrubOverlay(
                     onScrub: { point in
-                        let raw = rawIndex(point.x, count: count, width: width)
+                        let raw = Self.index(atX: point.x, count: count, width: width)
                         guard let index = nearestPresent(to: raw), index != activeIndex else { return }
                         activeIndex = index
                         onScrub(index)
@@ -147,33 +139,22 @@ struct ScrubbableChart: View {
         .frame(height: height)
     }
 
-    private func centreX(_ index: Int, count: Int, width: CGFloat) -> CGFloat {
-        if isLine {
-            let inset = TrendLine.horizontalInset
-            return count <= 1
-                ? width / 2
-                : inset + (width - 2 * inset) * CGFloat(index) / CGFloat(count - 1)
-        }
+    /// Centre of column `index` — the same geometry `DitheredBars` draws on and the axis row
+    /// lays its labels out on.
+    static func centreX(_ index: Int, count: Int, width: CGFloat) -> CGFloat {
+        let gap = DitheredBars.gap
         let columnWidth = (width - gap * CGFloat(count - 1)) / CGFloat(count)
         return CGFloat(index) * (columnWidth + gap) + columnWidth / 2
     }
 
-    private func rawIndex(_ x: CGFloat, count: Int, width: CGFloat) -> Int {
-        let clamped = min(max(x, 0), width)
-
-        if isLine {
-            let inset = TrendLine.horizontalInset
-            let step = count <= 1 ? width : (width - 2 * inset) / CGFloat(count - 1)
-            guard step > 0 else { return 0 }
-            return Int(((clamped - inset) / step).rounded()).clamped(to: 0...(count - 1))
-        }
-
+    private static func index(atX x: CGFloat, count: Int, width: CGFloat) -> Int {
+        let gap = DitheredBars.gap
         let columnWidth = (width - gap * CGFloat(count - 1)) / CGFloat(count)
         guard columnWidth > 0 else { return 0 }
-        return Int(clamped / (columnWidth + gap)).clamped(to: 0...(count - 1))
+        return Int(min(max(x, 0), width) / (columnWidth + gap)).clamped(to: 0...(count - 1))
     }
 
-    /// Nearest slot that actually holds a value — an empty day can't be selected.
+    /// Nearest column that actually holds a value — an empty slot can't be selected.
     private func nearestPresent(to index: Int) -> Int? {
         guard !values.isEmpty else { return nil }
         if values.indices.contains(index), values[index] != nil { return index }

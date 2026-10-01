@@ -7,11 +7,16 @@ import SwiftUI
 /// baseline rather than nothing, so a missing day reads as "no data" and still occupies its
 /// position instead of letting the next one slide into it.
 struct DitheredBars: View {
+    /// Space between columns. The axis row underneath lays its labels out on the same
+    /// geometry, so a column's centre and its label's centre are the same x — which is the
+    /// whole reason this is a shared constant rather than a literal in two places.
+    static let gap: CGFloat = 3
+
     let values: [Double?]
 
     var color: Color = .white
     var height: CGFloat = 150
-    var gap: CGFloat = 3
+    var gap: CGFloat = DitheredBars.gap
     var grid: CGFloat = 4
     var dotRadius: CGFloat = 0.85
     /// Floor on bar height, so a value at the very bottom of the axis still shows something.
@@ -136,73 +141,6 @@ struct MiniDitheredBars: View {
     }
 }
 
-/// The six-month average line.
-///
-/// A plain `Canvas` path rather than Swift Charts: it is a handful of points at a fixed
-/// height, and it can never blow out its container or cost a chart's worth of generics.
-struct TrendLine: View {
-    let points: [Double?]
-    var color: Color = .white
-    var height: CGFloat = 150
-    var highlightIndex: Int?
-
-    /// Horizontal inset, so the first and last dots aren't clipped by the canvas edge.
-    static let horizontalInset: CGFloat = 6
-
-    var body: some View {
-        Canvas { context, size in
-            let present = points.enumerated().compactMap { index, value in
-                value.map { (index, $0) }
-            }
-            guard !present.isEmpty else { return }
-
-            let values = present.map(\.1)
-            guard let high = values.max(), let low = values.min() else { return }
-            let span = max(high - low, 1e-6)
-            let count = points.count
-            let padY = max(6, size.height * 0.14)
-            let padX = Self.horizontalInset
-
-            func position(_ index: Int, _ value: Double) -> CGPoint {
-                let x = count == 1
-                    ? size.width / 2
-                    : padX + (size.width - 2 * padX) * CGFloat(index) / CGFloat(count - 1)
-                let y = size.height - padY - (size.height - 2 * padY) * CGFloat((value - low) / span)
-                return CGPoint(x: x, y: y)
-            }
-
-            var path = Path()
-            for (step, entry) in present.enumerated() {
-                let point = position(entry.0, entry.1)
-                if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
-            }
-            context.stroke(
-                path,
-                with: .color(color.opacity(highlightIndex == nil ? 1 : 0.3)),
-                style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
-            )
-
-            for (index, value) in present {
-                let point = position(index, value)
-                let isHighlighted = highlightIndex == index
-                let radius: CGFloat = isHighlighted ? 3.5 : 2.5
-                let opacity: Double = (highlightIndex == nil || isHighlighted) ? 1 : 0.3
-
-                context.fill(
-                    Path(ellipseIn: CGRect(
-                        x: point.x - radius,
-                        y: point.y - radius,
-                        width: radius * 2,
-                        height: radius * 2
-                    )),
-                    with: .color(color.opacity(opacity))
-                )
-            }
-        }
-        .frame(height: height)
-    }
-}
-
 #Preview("Bars") {
     VStack(alignment: .leading, spacing: 24) {
         DitheredBars(
@@ -212,7 +150,6 @@ struct TrendLine: View {
 
         MiniDitheredBars(values: [812, 640, nil, 1180, 1420, 760, 690], axis: (0, 1500))
 
-        TrendLine(points: [780, 820, nil, 910, 870, 760])
     }
     .padding(24)
     .background(Color.black)
