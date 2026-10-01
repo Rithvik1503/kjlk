@@ -27,6 +27,9 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    /// The unit as it appears on screen. Set as a label rather than prose, so it is capitalised.
+    var unitLabel: String { unit.uppercased() }
+
     var fractionDigits: Int {
         switch self {
         case .co2, .humidity, .light: 0

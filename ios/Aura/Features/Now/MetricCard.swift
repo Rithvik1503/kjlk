@@ -50,8 +50,10 @@ struct MetricCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
 
-            Text(metric.unit)
-                .font(.system(size: 11, weight: .semibold))
+            Text(metric.unitLabel)
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(Color.auraPrimaryText.opacity(0.5))
         }
         .foregroundStyle(Color.auraPrimaryText)
     }

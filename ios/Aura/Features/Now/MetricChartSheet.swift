@@ -35,7 +35,7 @@ struct MetricChartSheet: View {
                 }
             }
         }
-        .presentationDetents([.large])
+        .presentationDetents([.medium, .large])
         .preferredColorScheme(.dark)
     }
 
@@ -98,34 +98,41 @@ struct MetricChartSheet: View {
     // MARK: - Pieces
 
     private var readout: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(metric.format(shown?.value))
                     .font(.system(size: 40, weight: .bold))
                     .monospacedDigit()
                     .foregroundStyle(Color.auraPrimaryText)
                     .contentTransition(.numericText())
 
-                Text(metric.unit)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.auraPrimaryText)
+                Text(metric.unitLabel)
+                    .font(.system(size: 12, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.auraPrimaryText.opacity(0.5))
             }
 
-            HStack(spacing: 8) {
-                if let shown {
-                    Text(shown.date, format: .dateTime.hour().minute())
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
+            Spacer(minLength: 0)
 
-                    Text(metric.label(for: shown.value))
-                        .font(.subheadline)
-                        .foregroundStyle(metric.tint(for: shown.value))
-                } else {
-                    Text("No readings on this day")
-                        .font(.subheadline)
+            if let shown {
+                HStack(spacing: 7) {
+                    Text(shown.date.formatted(.dateTime.hour().minute()).uppercased())
                         .foregroundStyle(.secondary)
+
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+
+                    Text(metric.label(for: shown.value).uppercased())
+                        .foregroundStyle(metric.tint(for: shown.value).opacity(0.85))
                 }
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.7)
+                .monospacedDigit()
+            } else {
+                Text("NO READINGS")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.7)
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -137,7 +144,7 @@ struct MetricChartSheet: View {
         if points.isEmpty {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color.auraCard)
-                .frame(height: 260)
+                .frame(height: 190)
                 .overlay(
                     Text("Nothing recorded")
                         .font(.footnote)
@@ -147,16 +154,6 @@ struct MetricChartSheet: View {
             // Marks are grouped one kind per ForEach. Nesting a conditional inside a single
             // loop builds a generic type deep enough to crash Swift Charts at runtime.
             Chart {
-                ForEach(points) { point in
-                    AreaMark(
-                        x: .value("Time", point.date),
-                        yStart: .value("Floor", domain.lowerBound),
-                        yEnd: .value(metric.unit, point.value)
-                    )
-                    .interpolationMethod(.monotone)
-                    .foregroundStyle(areaFill)
-                }
-
                 ForEach(points) { point in
                     LineMark(
                         x: .value("Time", point.date),
@@ -184,8 +181,9 @@ struct MetricChartSheet: View {
             .chartXScale(domain: dayStart...dayEnd)
             .chartXSelection(value: $scrubbedAt)
             .chartYAxis {
+                // Values only — no gridlines, and nothing along the bottom. Scrubbing reports
+                // the time, so an axis of hours is a row of noise under the trace.
                 AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
-                    AxisGridLine().foregroundStyle(Color.white.opacity(0.06))
                     AxisValueLabel {
                         if let number = value.as(Double.self) {
                             Text(metric.format(number))
@@ -195,19 +193,8 @@ struct MetricChartSheet: View {
                     }
                 }
             }
-            .chartXAxis {
-                AxisMarks(values: .stride(by: .hour, count: 6)) { value in
-                    AxisGridLine().foregroundStyle(Color.white.opacity(0.05))
-                    AxisValueLabel {
-                        if let date = value.as(Date.self) {
-                            Text(date, format: .dateTime.hour())
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .frame(height: 260)
+            .chartXAxis(.hidden)
+            .frame(height: 190)
             .padding(.vertical, 8)
         }
     }
@@ -218,13 +205,6 @@ struct MetricChartSheet: View {
             startPoint: .bottom,
             endPoint: .top
         )
-    }
-
-    private var areaFill: LinearGradient {
-        let stops = metric.gradientStops(over: domain).map {
-            Gradient.Stop(color: $0.color.opacity(0.22), location: $0.location)
-        }
-        return LinearGradient(stops: stops, startPoint: .bottom, endPoint: .top)
     }
 
     @ViewBuilder
@@ -263,9 +243,10 @@ struct MetricChartSheet: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.auraPrimaryText)
 
-                Text(metric.unit)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+                Text(metric.unitLabel)
+                    .font(.system(size: 8, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(Color.auraPrimaryText.opacity(0.45))
             }
         }
         .frame(maxWidth: .infinity)

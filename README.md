@@ -166,8 +166,10 @@ tinted, by how bad the reading is: green, yellow, orange, red. Ranges are 400–
 0–100%, and 0–5,000 lux, the last widening to the next round thousand when direct sun runs
 past it.
 
-Tapping a card opens that metric's day: a scrubbable trace from midnight to now, its line
-coloured by height through the same severity bands, with low, average and peak underneath.
+Tapping a card opens that metric's day in a half-height sheet: a scrubbable trace from midnight
+to now, its line coloured by height through the same severity bands, with low, average and peak
+underneath. The chart is just the line — no gridlines, no fill, no hour labels along the
+bottom, since scrubbing reports the time anyway.
 
 The navigation bar holds a settings button on the left, and on the right a day stepper
 (‹ ›) with a date button between them that opens a graphical `DatePicker` in a popover.
