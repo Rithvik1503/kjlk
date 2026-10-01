@@ -19,10 +19,12 @@ struct ThermalCard: View {
             // as the number on one side and its context on the other.
             Spacer(minLength: 12)
 
-            Text(averageText)
-                // Regular rather than medium: the figure beside it is thin, and a heavier
-                // label next to it reads as the louder of the two.
-                .font(.subheadline.weight(.regular))
+            // Uppercased here rather than in `averageText`, which VoiceOver reads.
+            Text(averageText.uppercased())
+                // Set small and tracked out, like the unit labels below — at this size
+                // uppercase reads as a caption rather than as a second sentence.
+                .font(.system(size: 10, weight: .medium))
+                .tracking(0.8)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
                 // Sits against the lower half of the figure rather than its cap height, so
