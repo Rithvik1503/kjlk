@@ -27,6 +27,9 @@ function derFromPEM(pem: string): Uint8Array {
   const body = pem
     .replace(/-----BEGIN PRIVATE KEY-----/, "")
     .replace(/-----END PRIVATE KEY-----/, "")
+    // Real newlines, and the literal two-character \n that some secret editors store
+    // instead of them. Base64 has neither, so dropping both is safe.
+    .replace(/\\n/g, "")
     .replace(/\s+/g, "");
   const binary = atob(body);
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
