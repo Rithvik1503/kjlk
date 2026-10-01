@@ -120,6 +120,14 @@ final class AuraStore: ObservableObject {
         return MetricChange(delta: delta, isWorse: worse)
     }
 
+    /// What the monitor was labelled when it last reported, which titles the Home screen.
+    var currentZone: String? {
+        readings.reversed().lazy.compactMap(\.zone).first
+    }
+
+    /// When the most recent reading on screen was taken.
+    var lastReadingAt: Date? { readings.last?.recordedAt }
+
     /// The earliest day any picker should offer — when the monitor started reporting.
     var earliestSelectableDate: Date {
         firstReadingAt.map { calendar.startOfDay(for: $0) } ?? calendar.startOfDay(for: Date())

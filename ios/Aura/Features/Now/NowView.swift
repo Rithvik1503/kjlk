@@ -26,6 +26,8 @@ struct NowView: View {
 
                         atmosphereSection
 
+                        footer
+
                         if let message = store.errorMessage {
                             errorRow(message)
                         }
@@ -36,7 +38,7 @@ struct NowView: View {
                 .scrollIndicators(.hidden)
                 .refreshable { await store.loadSelectedDay() }
             }
-            .navigationTitle("Home")
+            .navigationTitle(store.currentZone ?? "Home")
             .toolbar { toolbarContent }
         }
         .task(id: store.selectedDate) { await store.loadSelectedDay() }
@@ -76,6 +78,28 @@ struct NowView: View {
             }
         }
         .padding(.top, 6)
+    }
+
+    /// Freshness, kept to the bottom of the page — useful to check, not worth leading with.
+    @ViewBuilder
+    private var footer: some View {
+        if let recordedAt = store.lastReadingAt {
+            Text(footerText(for: recordedAt))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 6)
+                .accessibilityLabel("Last updated \(recordedAt.formatted(.relative(presentation: .numeric)))")
+        }
+    }
+
+    private func footerText(for date: Date) -> String {
+        // On a past day a relative stamp would read "3 days ago", which says nothing about
+        // the day being shown. The clock time does.
+        guard store.isViewingToday else {
+            return "Last reading at \(date.formatted(.dateTime.hour().minute()))"
+        }
+        return "Last updated \(date.formatted(.relative(presentation: .numeric)))"
     }
 
     // MARK: - Toolbar

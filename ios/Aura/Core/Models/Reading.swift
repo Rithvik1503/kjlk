@@ -8,6 +8,8 @@ import Foundation
 struct Reading: Identifiable, Hashable, Sendable {
     let id: Int64
     let deviceID: String
+    /// Where the monitor was set to when this was taken, e.g. "Outdoor". Nil if unset.
+    let zone: String?
     let recordedAt: Date
     let co2: Double?
     let temperature: Double?
@@ -17,6 +19,7 @@ struct Reading: Identifiable, Hashable, Sendable {
     init(
         id: Int64,
         deviceID: String,
+        zone: String? = nil,
         recordedAt: Date,
         co2: Double? = nil,
         temperature: Double? = nil,
@@ -25,6 +28,7 @@ struct Reading: Identifiable, Hashable, Sendable {
     ) {
         self.id = id
         self.deviceID = deviceID
+        self.zone = zone
         self.recordedAt = recordedAt
         self.co2 = co2
         self.temperature = temperature
@@ -49,6 +53,7 @@ extension Reading: Decodable {
     private enum CodingKeys: String, CodingKey {
         case id
         case deviceID = "device_id"
+        case zone
         case recordedAt = "recorded_at"
         case co2 = "co2_ppm"
         case temperature = "temperature_c"
@@ -74,6 +79,7 @@ extension Reading: Decodable {
         }
 
         deviceID = try container.decodeIfPresent(String.self, forKey: .deviceID) ?? "unknown"
+        zone = try container.decodeIfPresent(String.self, forKey: .zone)
 
         let timestamp = try container.decode(String.self, forKey: .recordedAt)
         guard let date = PostgresDate.parse(timestamp) else {
@@ -116,6 +122,7 @@ extension Reading: Encodable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(deviceID, forKey: .deviceID)
+        try container.encodeIfPresent(zone, forKey: .zone)
         try container.encode(PostgresDate.string(from: recordedAt), forKey: .recordedAt)
         try container.encodeIfPresent(co2, forKey: .co2)
         try container.encodeIfPresent(temperature, forKey: .temperature)

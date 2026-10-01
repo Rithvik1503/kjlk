@@ -60,6 +60,10 @@ means in Postgres, bucketed in your own time zone — six months of minute-resol
 a quarter of a million rows and the screen needs six numbers from them. Without it Trends says
 so and tells you which file to run.
 
+`0004_zone.sql` is required by the zone button. Run it *before* deploying the updated function
+or flashing — the column is nullable, so a device that doesn't send a zone keeps working either
+side of the change.
+
 **Account.** Authentication → Users → Add user. Create the account you'll sign into the app
 with, then copy its UUID.
 
@@ -124,6 +128,12 @@ What changed from the original sketch:
   with a `-1`; it records nothing, and the app draws a gap. CO₂ of 0 ppm during warm-up is
   treated as "no reading" rather than as a measurement.
 - **4xx responses drop the batch** instead of retrying a payload the server will never accept.
+- **A zone button.** Pressing it cycles the monitor's label — "My Room", "Outdoor", edit the
+  `ZONES` table to taste. The name travels with every reading and titles the app's home screen;
+  an RGB LED flashes that zone's colour, and the built-in LED blinks its number so the board is
+  readable with nothing wired up. It defaults to GPIO 0, the BOOT button on most DevKits, so it
+  needs no hardware at all. The choice survives a power cut, and a press pushes the next reading
+  up immediately rather than waiting for the interval.
 
 `client.setInsecure()` is still there, as in the original. It skips certificate verification,
 which is a reasonable trade on a network you control and keeps setup painless. The comment

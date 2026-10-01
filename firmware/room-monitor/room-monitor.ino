@@ -17,6 +17,8 @@
 #include <HTTPClient.h>
 #include <time.h>
 
+#include <Preferences.h>
+
 #include <Wire.h>
 #include <BH1750.h>
 #include <SensirionI2cScd4x.h>
@@ -38,6 +40,45 @@ static const unsigned long UPLOAD_INTERVAL_MS = 15000;
 static const unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
 static const int WIFI_ATTEMPTS_PER_NETWORK = 20;         // x 500 ms = 10 s per network.
 
+// ---------------------------------------------------------------------------
+// Zones
+// ---------------------------------------------------------------------------
+//
+// Press the button to cycle. The name travels with every reading and titles the app's home
+// screen; the colour is just so the board can tell you which one it landed on.
+//
+// Pure on/off per channel rather than PWM, so this needs no LED library and no version
+// juggling over the ESP32 core's changing ledc API. That gives seven usable colours.
+
+struct Zone {
+  const char* name;
+  bool red;
+  bool green;
+  bool blue;
+};
+
+static const Zone ZONES[] = {
+  {"My Room", false, false, true},    // blue
+  {"Outdoor", false, true,  false},   // green
+};
+static const uint8_t ZONE_COUNT = sizeof(ZONES) / sizeof(ZONES[0]);
+
+// GPIO 0 is the BOOT button on most DevKits, so this works with nothing wired up. Holding it
+// down during a reset still enters the bootloader; pressing it while running does not.
+#define BUTTON_PIN 0
+
+// Optional external RGB LED. Harmless if nothing is attached — the pins just toggle.
+#define LED_R_PIN 25
+#define LED_G_PIN 26
+#define LED_B_PIN 27
+// Set true if your LED's long leg goes to 3V3 rather than ground.
+static const bool LED_COMMON_ANODE = false;
+
+// The built-in LED blinks the zone's number, so the board is readable without an RGB LED.
+#define STATUS_LED_PIN 2
+
+static const unsigned long BUTTON_DEBOUNCE_MS = 50;
+
 // Readings held in RAM while offline — 20 minutes' worth at a 5s sample interval.
 static const size_t BUFFER_CAPACITY = 240;
 
@@ -58,6 +99,7 @@ struct BufferedReading {
   float   temperature;
   float   humidity;
   float   light;           // NAN when the BH1750 didn't report.
+  uint8_t zone;            // Index into ZONES at the moment it was taken.
 };
 
 BH1750 lightMeter;
@@ -74,6 +116,19 @@ static unsigned long lastWiFiAttempt = 0;
 
 static bool clockReady = false;
 static bool lightSensorReady = false;
+
+// Survives a power cut, so the board doesn't wake up claiming to be somewhere else.
+static Preferences settings;
+static uint8_t zoneIndex = 0;
+
+static int lastButtonState = HIGH;
+static unsigned long lastButtonChange = 0;
+// True between an edge and the action it causes, so one press is one zone change however
+// long the button is held.
+static bool buttonArmed = false;
+// Set on a press, cleared once a reading taken in the new zone has been sent — so the app
+// reflects the change in seconds rather than at the next scheduled upload.
+static bool zoneUploadPending = false;
 
 static char errorMessage[64];
 static int16_t error;
@@ -98,6 +153,71 @@ static void bufferDropFront(size_t count) {
   size_t removed = (count < bufferCount) ? count : bufferCount;
   bufferHead = (bufferHead + removed) % BUFFER_CAPACITY;
   bufferCount -= removed;
+}
+
+// ---------------------------------------------------------------------------
+// Zone button and LED
+// ---------------------------------------------------------------------------
+
+static void writeRGB(bool red, bool green, bool blue) {
+  // A common-anode LED lights when its pin is pulled LOW, so the levels invert.
+  digitalWrite(LED_R_PIN, red   != LED_COMMON_ANODE ? HIGH : LOW);
+  digitalWrite(LED_G_PIN, green != LED_COMMON_ANODE ? HIGH : LOW);
+  digitalWrite(LED_B_PIN, blue  != LED_COMMON_ANODE ? HIGH : LOW);
+}
+
+static void ledOff() {
+  writeRGB(false, false, false);
+}
+
+/// Flashes the zone's colour, then blinks the built-in LED once per zone number — so the
+/// board still tells you where it thinks it is with no RGB LED attached.
+static void signalZone(uint8_t index) {
+  const Zone& zone = ZONES[index];
+
+  for (int flash = 0; flash < 3; flash++) {
+    writeRGB(zone.red, zone.green, zone.blue);
+    delay(160);
+    ledOff();
+    delay(110);
+  }
+
+  delay(200);
+  for (uint8_t blink = 0; blink <= index; blink++) {
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    delay(140);
+    digitalWrite(STATUS_LED_PIN, LOW);
+    delay(160);
+  }
+}
+
+static void setZone(uint8_t index) {
+  zoneIndex = index % ZONE_COUNT;
+  settings.putUChar("zone", zoneIndex);
+
+  Serial.print("Zone: ");
+  Serial.println(ZONES[zoneIndex].name);
+
+  signalZone(zoneIndex);
+  zoneUploadPending = true;
+}
+
+/// Debounced falling edge on the button. Called every loop.
+static void pollButton() {
+  int state = digitalRead(BUTTON_PIN);
+
+  if (state != lastButtonState) {
+    lastButtonState = state;
+    lastButtonChange = millis();
+    buttonArmed = true;
+    return;
+  }
+
+  // Only act once the level has been steady long enough to not be contact bounce.
+  if (buttonArmed && state == LOW && millis() - lastButtonChange >= BUTTON_DEBOUNCE_MS) {
+    buttonArmed = false;
+    setZone(zoneIndex + 1);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +285,10 @@ static void syncClock() {
 
 static void appendReadingJSON(String& json, const BufferedReading& reading) {
   json += "{\"device_id\":\"" DEVICE_ID "\"";
+
+  json += ",\"zone\":\"";
+  json += ZONES[reading.zone % ZONE_COUNT].name;
+  json += "\"";
 
   if (reading.recordedAt > 0) {
     struct tm timeinfo;
@@ -284,6 +408,7 @@ static void takeSample() {
   // The SCD40 reports 0 ppm while it is still warming up; that isn't a measurement.
   BufferedReading reading;
   reading.recordedAt = clockReady ? time(nullptr) : 0;
+  reading.zone = zoneIndex;
   reading.co2 = (co2 == 0) ? -1 : (int32_t)co2;
   reading.temperature = temperature;
   reading.humidity = humidity;
@@ -303,6 +428,7 @@ static void takeSample() {
   } else {
     Serial.println("Light:       unavailable");
   }
+  Serial.printf("Zone:        %s\n", ZONES[zoneIndex].name);
   Serial.printf("Buffered:    %u\n", (unsigned)bufferCount);
 }
 
@@ -313,6 +439,18 @@ static void takeSample() {
 void setup() {
   Serial.begin(115200);
   delay(200);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(LED_R_PIN, OUTPUT);
+  pinMode(LED_G_PIN, OUTPUT);
+  pinMode(LED_B_PIN, OUTPUT);
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  ledOff();
+
+  settings.begin("aura", false);
+  zoneIndex = settings.getUChar("zone", 0) % ZONE_COUNT;
+  Serial.print("Zone: ");
+  Serial.println(ZONES[zoneIndex].name);
 
   Wire.begin(21, 22);
 
@@ -346,15 +484,24 @@ void setup() {
 }
 
 void loop() {
+  pollButton();
+
   // Unsigned subtraction, so this keeps working after millis() wraps at ~49 days.
   if (millis() - lastSample >= SAMPLE_INTERVAL_MS) {
     lastSample = millis();
     takeSample();
   }
 
-  if (millis() - lastUpload >= UPLOAD_INTERVAL_MS && bufferCount > 0) {
+  // A zone change waits for a reading actually taken in the new zone — sending the buffer
+  // early would only re-send readings from the old one.
+  bool zoneReady = zoneUploadPending && bufferCount > 0 &&
+                   buffer[(bufferHead + bufferCount - 1) % BUFFER_CAPACITY].zone == zoneIndex;
+
+  if (zoneReady || (millis() - lastUpload >= UPLOAD_INTERVAL_MS && bufferCount > 0)) {
     lastUpload = millis();
-    flushBuffer();
+    if (flushBuffer() && zoneReady) {
+      zoneUploadPending = false;
+    }
   }
 
   delay(50);

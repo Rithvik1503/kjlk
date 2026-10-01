@@ -23,6 +23,7 @@ type Payload = {
   light_lux?: unknown;
   device_id?: unknown;
   recorded_at?: unknown;
+  zone?: unknown;
 };
 
 type Row = {
@@ -33,6 +34,7 @@ type Row = {
   temperature_c: number | null;
   humidity_percent: number | null;
   light_lux: number | null;
+  zone: string | null;
 };
 
 /**
@@ -132,9 +134,15 @@ Deno.serve(async (req) => {
       ? item.device_id.trim().slice(0, 64)
       : "esp32-room-1";
 
+    // Free text from the device, so it is capped and trimmed before it reaches a column.
+    const zone = typeof item.zone === "string" && item.zone.trim() !== ""
+      ? item.zone.trim().slice(0, 64)
+      : null;
+
     rows.push({
       owner_id: ownerId,
       device_id: deviceId,
+      zone,
       recorded_at: recordedAt.toISOString(),
       co2_ppm: co2 === null ? null : Math.round(co2),
       temperature_c: temperature,

@@ -249,7 +249,7 @@ actor SupabaseClient {
     }
 
     private static let readingColumns =
-        "id,device_id,recorded_at,co2_ppm,temperature_c,humidity_percent,light_lux"
+        "id,device_id,zone,recorded_at,co2_ppm,temperature_c,humidity_percent,light_lux"
 
     // MARK: - Request plumbing
 

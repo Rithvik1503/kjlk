@@ -34,6 +34,7 @@ extension Reading {
             return Reading(
                 id: Int64(step),
                 deviceID: "esp32-room-1",
+                zone: "My Room",
                 recordedAt: date,
                 co2: max(410, co2),
                 temperature: temperature,
