@@ -155,19 +155,19 @@ Fill it in — it's gitignored, and the app picks it up as a default.
 
 One screen — **Home** — behind a system tab bar.
 
-A **Thermal reading** section leads the screen: the temperature as a large light figure, with
-the day's average set to its right and how that compares with the week before — "Hotter than
-usual", "Colder than usual", "About usual". Its card carries a low wash of the temperature's
-own band colour from the top right.
+A thermal card leads the screen: the temperature as a large light figure, with the day's
+average to its right and how that compares with the week before — "Hotter than usual",
+"Colder than usual", "About usual". It carries a low wash of the temperature's own band colour.
 
-Below it, three cards: CO₂, humidity and light. Each is the number, its unit, and a 96 × 6
-dot-matrix level indicator. Each lit column takes the band colour at *its own* position on that
-metric's scale, so the lit run is a slice of the scale's ramp rather than a flat block, and the
-lit cells bloom so the grid reads as an emissive panel. That is what says whether a number is
-good, which is why no card carries a verdict in words. The background glow follows the CO₂ band.
+Under an **Atmosphere** heading, three more cards: CO₂, humidity and light. Each is the number
+with its unit beside it, over a dense grid of dim cells with a bright marker standing where the
+reading falls. The grid carries no colour of its own — only the neighbourhood of the marker is
+tinted, by how bad the reading is: green, yellow, orange, red. Ranges are 400–5,000 ppm,
+0–100%, and 0–5,000 lux, the last widening to the next round thousand when direct sun runs
+past it.
 
-The matrix is drawn in a `Canvas`, in two passes — bloom, then sharp cells on top. As a grid of
-`Shape` views it would be 576 views per card.
+Tapping a card opens that metric's day: a scrubbable trace from midnight to now, its line
+coloured by height through the same severity bands, with low, average and peak underneath.
 
 The navigation bar holds a settings button on the left, and on the right a day stepper
 (‹ ›) with a date button between them that opens a graphical `DatePicker` in a popover.

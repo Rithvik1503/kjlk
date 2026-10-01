@@ -10,6 +10,7 @@ struct NowView: View {
 
     @State private var showingSettings = false
     @State private var showingDatePicker = false
+    @State private var chartMetric: MetricKind?
 
     var body: some View {
         NavigationStack {
@@ -18,12 +19,13 @@ struct NowView: View {
 
                 ScrollView {
                     VStack(spacing: 14) {
-                        thermalSection
+                        ThermalCard(
+                            temperature: store.value(for: .temperature),
+                            dayAverage: store.dayAverage(of: .temperature),
+                            comparison: store.thermalComparison
+                        )
 
-                        // Temperature is not here — it leads the screen, above.
-                        ForEach([MetricKind.co2, .humidity, .light]) { metric in
-                            MetricCard(metric: metric, value: store.value(for: metric))
-                        }
+                        atmosphereSection
 
                         if let message = store.errorMessage {
                             errorRow(message)
@@ -42,22 +44,37 @@ struct NowView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView().environmentObject(store)
         }
+        .sheet(item: $chartMetric) { metric in
+            MetricChartSheet(
+                metric: metric,
+                readings: store.readings,
+                day: store.selectedDate,
+                range: store.scale(for: metric)
+            )
+        }
     }
 
-    private var thermalSection: some View {
+    private var atmosphereSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Thermal reading")
+            Text("Atmosphere")
                 .font(.headline)
                 .foregroundStyle(Color.auraPrimaryText)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
 
-            ThermalCard(
-                temperature: store.value(for: .temperature),
-                dayAverage: store.dayAverage(of: .temperature),
-                comparison: store.thermalComparison
-            )
+            VStack(spacing: 14) {
+                ForEach([MetricKind.co2, .humidity, .light]) { metric in
+                    MetricCard(
+                        metric: metric,
+                        value: store.value(for: metric),
+                        range: store.scale(for: metric)
+                    ) {
+                        chartMetric = metric
+                    }
+                }
+            }
         }
+        .padding(.top, 6)
     }
 
     // MARK: - Toolbar

@@ -1,32 +1,40 @@
 import SwiftUI
 
-/// A dot-matrix level indicator — a dense grid of small bright cells, lit left to right.
+/// A dense grid of dim cells with a bright marker at the current reading.
 ///
-/// Columns carry the reading: every column up to the current value is lit, the rest sit dark.
-/// Each lit column takes the band colour at *its own* position on the scale, so the lit run is
-/// a slice of the metric's own ramp rather than a flat block, and the lit cells bloom so the
-/// grid reads as an emissive panel rather than a drawn chart.
+/// The grid itself carries no colour — colour would imply every position means something, and
+/// it doesn't. Only the neighbourhood of the marker is tinted, by the severity of the reading
+/// standing there: green when it's fine, through yellow and orange, red when it isn't. The
+/// wash falls off with distance, so the eye lands on the marker rather than the spread.
 ///
 /// Drawn in a `Canvas` rather than as a grid of `Shape` views: at this density a stack would
-/// be hundreds of views per card, each carrying its own shadow, and four cards means a few
-/// thousand. One canvas draws the same thing in two passes.
+/// be hundreds of views per card, and there are three cards.
 struct DotMatrixBar: View {
     let metric: MetricKind
-    /// Raw value, or nil when there is no reading — which leaves the whole grid dark.
+    /// Raw value, or nil when there is no reading — which leaves the grid dark and unmarked.
     let value: Double?
+    /// The span the grid covers. Defaults to the metric's own, which the store widens for
+    /// light when a reading exceeds it.
+    var range: ClosedRange<Double>?
 
     var columns: Int = 96
     var rows: Int = 6
     var height: CGFloat = 18
-    /// Cell size as a fraction of the gap between cell centres. Much above 0.7 and the cells
-    /// touch, turning the grid into a solid bar.
+    /// Cell size as a fraction of the gap between cell centres.
     var fillRatio: CGFloat = 0.6
+    /// How far the tint spreads from the marker, as a fraction of the full width.
+    var falloff: CGFloat = 0.13
 
-    private var litColumns: Int {
-        guard let value else { return 0 }
-        // Round up so any reading above the floor lights at least one column.
-        return Int((metric.position(of: value) * Double(columns)).rounded(.up))
-            .clamped(to: 0...columns)
+    private var effectiveRange: ClosedRange<Double> { range ?? metric.scale }
+
+    /// Column the marker stands in, or nil when there is nothing to mark.
+    private var markerColumn: Double? {
+        guard let value else { return nil }
+        return metric.position(of: value, in: effectiveRange) * Double(columns - 1)
+    }
+
+    private var tint: Color {
+        metric.tint(for: value)
     }
 
     var body: some View {
@@ -37,18 +45,18 @@ struct DotMatrixBar: View {
             let pitchY = size.height / CGFloat(rows)
             let diameter = max(min(pitchX, pitchY) * fillRatio, 0.5)
 
-            drawUnlit(in: &context, pitchX: pitchX, pitchY: pitchY, diameter: diameter)
+            drawBed(in: &context, pitchX: pitchX, pitchY: pitchY, diameter: diameter)
 
-            guard litColumns > 0 else { return }
+            guard let markerColumn else { return }
 
-            // Bloom first, then the same cells sharp on top, so the glow sits behind each dot
-            // rather than washing it out.
-            context.drawLayer { layer in
-                layer.addFilter(.blur(radius: diameter * 0.9))
-                layer.opacity = 0.85
-                drawLit(in: &layer, pitchX: pitchX, pitchY: pitchY, diameter: diameter * 1.3)
-            }
-            drawLit(in: &context, pitchX: pitchX, pitchY: pitchY, diameter: diameter)
+            drawWash(
+                in: &context,
+                around: markerColumn,
+                pitchX: pitchX,
+                pitchY: pitchY,
+                diameter: diameter
+            )
+            drawMarker(in: &context, at: markerColumn, pitchX: pitchX, size: size)
         }
         .frame(height: height)
         .accessibilityElement(children: .ignore)
@@ -58,16 +66,15 @@ struct DotMatrixBar: View {
         )
     }
 
-    private func drawUnlit(
+    /// Every cell, dim. One path, one fill.
+    private func drawBed(
         in context: inout GraphicsContext,
         pitchX: CGFloat,
         pitchY: CGFloat,
         diameter: CGFloat
     ) {
-        guard litColumns < columns else { return }
-
         var path = Path()
-        for column in litColumns..<columns {
+        for column in 0..<columns {
             for row in 0..<rows {
                 path.addPath(cell(column: column, row: row, pitchX: pitchX, pitchY: pitchY, diameter: diameter))
             }
@@ -75,20 +82,67 @@ struct DotMatrixBar: View {
         context.fill(path, with: .color(.auraDotOff))
     }
 
-    /// One fill per column, since the colour only varies along the x axis.
-    private func drawLit(
+    /// Cells near the marker, tinted and fading out with distance.
+    private func drawWash(
         in context: inout GraphicsContext,
+        around markerColumn: Double,
         pitchX: CGFloat,
         pitchY: CGFloat,
         diameter: CGFloat
     ) {
-        for column in 0..<litColumns {
+        let spread = max(Double(columns) * Double(falloff), 1)
+        let first = Int((markerColumn - spread).rounded(.down)).clamped(to: 0...(columns - 1))
+        let last = Int((markerColumn + spread).rounded(.up)).clamped(to: 0...(columns - 1))
+        guard first <= last else { return }
+
+        for column in first...last {
+            let distance = abs(Double(column) - markerColumn) / spread
+            guard distance <= 1 else { continue }
+
+            // Eases out, so the tint concentrates on the marker instead of forming a block.
+            let intensity = pow(1 - distance, 1.8)
+            guard intensity > 0.01 else { continue }
+
             var path = Path()
             for row in 0..<rows {
                 path.addPath(cell(column: column, row: row, pitchX: pitchX, pitchY: pitchY, diameter: diameter))
             }
-            context.fill(path, with: .color(tint(at: column)))
+            context.fill(path, with: .color(tint.opacity(intensity)))
         }
+    }
+
+    /// The marker itself: a dark gap to separate it from the grid, then a bright bar.
+    private func drawMarker(
+        in context: inout GraphicsContext,
+        at markerColumn: Double,
+        pitchX: CGFloat,
+        size: CGSize
+    ) {
+        let centre = (markerColumn + 0.5) * pitchX
+        let barWidth: CGFloat = 2
+        let gapWidth = barWidth + 3
+
+        let gap = CGRect(
+            x: centre - gapWidth / 2,
+            y: -2,
+            width: gapWidth,
+            height: size.height + 4
+        )
+        context.fill(Path(gap), with: .color(.auraCard))
+
+        let bar = CGRect(
+            x: centre - barWidth / 2,
+            y: -1,
+            width: barWidth,
+            height: size.height + 2
+        )
+        let path = Path(roundedRect: bar, cornerRadius: barWidth / 2, style: .continuous)
+
+        context.drawLayer { layer in
+            layer.addFilter(.blur(radius: 3))
+            layer.fill(path, with: .color(tint))
+        }
+        context.fill(path, with: .color(.white))
     }
 
     private func cell(
@@ -106,17 +160,11 @@ struct DotMatrixBar: View {
         )
         return Path(roundedRect: rect, cornerRadius: diameter * 0.25, style: .continuous)
     }
-
-    /// The band colour at this column's own position along the scale.
-    private func tint(at column: Int) -> Color {
-        let fraction = columns > 1 ? Double(column) / Double(columns - 1) : 0
-        return metric.band(for: metric.value(atPosition: fraction)).tint
-    }
 }
 
 #Preview("Dot matrix") {
     VStack(alignment: .leading, spacing: 22) {
-        ForEach([480.0, 720.0, 1100.0, 1700.0], id: \.self) { value in
+        ForEach([620.0, 1050.0, 1500.0, 2400.0], id: \.self) { value in
             VStack(alignment: .leading, spacing: 8) {
                 Text("\(Int(value)) ppm — \(MetricKind.co2.label(for: value))")
                     .font(.caption)
@@ -126,6 +174,8 @@ struct DotMatrixBar: View {
             }
         }
 
+        DotMatrixBar(metric: .humidity, value: 47)
+        DotMatrixBar(metric: .light, value: 280)
         DotMatrixBar(metric: .co2, value: nil)
     }
     .padding(24)

@@ -114,6 +114,22 @@ final class AuraStore: ObservableObject {
         return delta > 0 ? "Hotter than usual" : "Colder than usual"
     }
 
+    /// The span a metric's indicator should cover.
+    ///
+    /// Everything but light uses its fixed range. Light has no real ceiling — direct sun will
+    /// run past 5,000 lux — so the range grows to the next round thousand above the day's
+    /// peak rather than pinning the marker to the right edge and hiding the variation.
+    func scale(for metric: MetricKind) -> ClosedRange<Double> {
+        let base = metric.scale
+        guard metric == .light else { return base }
+
+        let peak = readings.compactMap(\.light).filter(\.isFinite).max() ?? 0
+        guard peak > base.upperBound else { return base }
+
+        let widened = (peak / 1000).rounded(.up) * 1000
+        return base.lowerBound...max(widened, base.upperBound)
+    }
+
     /// Backdrop colour, driven by CO₂ — the metric that moves fastest and the one you can
     /// actually act on.
     var tint: Color {

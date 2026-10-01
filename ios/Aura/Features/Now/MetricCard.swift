@@ -1,62 +1,69 @@
 import SwiftUI
 
-/// One sensor: the number, its unit, and where it falls on its own scale.
+/// One sensor: the number, its unit, and a marker showing where it stands.
 ///
-/// The same card serves all four metrics. Nothing says in words whether the number is good —
-/// that is the matrix's job, by how far it runs and what colour it reaches.
+/// Tapping opens the day's trace. The whole card is the target rather than the grid alone —
+/// a 18pt-tall strip is a poor thing to ask a thumb to find.
 struct MetricCard: View {
     let metric: MetricKind
     /// Raw value in the metric's own units, or nil when there is no reading.
     let value: Double?
+    /// The span the grid covers, widened past the metric's default where readings demand it.
+    let range: ClosedRange<Double>
+    let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            reading
-            DotMatrixBar(metric: metric, value: value)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 12) {
+                reading
+                DotMatrixBar(metric: metric, value: value, range: range)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.auraCard)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.auraCard)
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(metric.title)
+        .accessibilityValue(
+            value.map { "\(metric.format($0)) \(metric.unit), \(metric.label(for: $0))" } ?? "No reading"
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
-        )
+        .accessibilityHint("Shows the day's readings")
+        .accessibilityAddTraits(.isButton)
     }
 
     private var reading: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(metric.format(value))
                 .font(.system(size: 15, weight: .bold))
                 .monospacedDigit()
-                .foregroundStyle(Color.auraPrimaryText)
                 .contentTransition(.numericText())
                 .animation(.snappy, value: value)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
 
-            Text(metric.captionedUnit)
-                // Kept below the figure's 15pt so the unit still reads as secondary to it.
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.tertiary)
+            Text(metric.unit)
+                .font(.system(size: 11, weight: .semibold))
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(metric.title)
-        .accessibilityValue(
-            value.map { "\(metric.format($0)) \(metric.unit)" } ?? "No reading"
-        )
+        .foregroundStyle(Color.auraPrimaryText)
     }
 }
 
 #Preview("Cards") {
     VStack(spacing: 14) {
-        MetricCard(metric: .co2, value: 712)
-        MetricCard(metric: .temperature, value: 22.4)
-        MetricCard(metric: .humidity, value: 47)
-        MetricCard(metric: .light, value: 284)
-        MetricCard(metric: .co2, value: nil)
+        MetricCard(metric: .co2, value: 712, range: MetricKind.co2.scale) {}
+        MetricCard(metric: .co2, value: 2400, range: MetricKind.co2.scale) {}
+        MetricCard(metric: .humidity, value: 47, range: MetricKind.humidity.scale) {}
+        MetricCard(metric: .light, value: 284, range: MetricKind.light.scale) {}
+        MetricCard(metric: .co2, value: nil, range: MetricKind.co2.scale) {}
     }
     .padding(20)
     .background(Color.auraBase)

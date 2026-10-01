@@ -1,9 +1,6 @@
 import SwiftUI
 
 /// The four things the room monitor measures.
-///
-/// Only CO₂ is on screen today, but readings still carry all four, so the others stay defined
-/// here — re-surfacing one is a view, not a schema change.
 enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
     case co2
     case temperature
@@ -30,16 +27,6 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
-    /// How the value reads next to the number — "CO₂ ppm" under the big figure.
-    var captionedUnit: String {
-        switch self {
-        case .co2: "CO₂ ppm"
-        case .temperature: "Temperature °C"
-        case .humidity: "Humidity %"
-        case .light: "Light lux"
-        }
-    }
-
     var fractionDigits: Int {
         switch self {
         case .co2, .humidity, .light: 0
@@ -48,50 +35,56 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 
     /// The span the indicator covers end to end.
+    ///
+    /// Light's ceiling is a floor, not a limit — direct sun will exceed it, so the store
+    /// widens the range when a reading does (see `AuraStore.scale(for:)`).
     var scale: ClosedRange<Double> {
         switch self {
-        case .co2: 400...2000
+        case .co2: 400...5000
         case .temperature: 10...35
         case .humidity: 0...100
-        case .light: 0...1000
+        case .light: 0...5000
         }
     }
 
-    /// Quality steps, lowest threshold first.
+    /// Severity steps, lowest threshold first.
+    ///
+    /// These encode *how bad* a value is, not where it sits — green through red — so a metric
+    /// that is bad at both ends, like humidity, walks red → green → red as it climbs.
     var bands: [MetricBand] {
         switch self {
         case .co2:
             [
-                MetricBand(upperBound: 600, label: "Fresh", tint: .auraGreen),
-                MetricBand(upperBound: 800, label: "Comfortable", tint: .auraLime),
-                MetricBand(upperBound: 1200, label: "Stuffy", tint: .auraAmber),
+                MetricBand(upperBound: 800, label: "Fresh", tint: .auraGreen),
+                MetricBand(upperBound: 1200, label: "Stuffy", tint: .auraYellow),
                 MetricBand(upperBound: 1600, label: "Poor", tint: .auraOrange),
-                MetricBand(upperBound: 2000, label: "Bad", tint: .auraRed),
-                MetricBand(upperBound: .infinity, label: "Severe", tint: .auraViolet),
+                MetricBand(upperBound: .infinity, label: "Bad", tint: .auraRed),
+            ]
+        case .humidity:
+            [
+                MetricBand(upperBound: 20, label: "Very dry", tint: .auraRed),
+                MetricBand(upperBound: 30, label: "Dry", tint: .auraOrange),
+                MetricBand(upperBound: 40, label: "A bit dry", tint: .auraYellow),
+                MetricBand(upperBound: 60, label: "Comfortable", tint: .auraGreen),
+                MetricBand(upperBound: 70, label: "Humid", tint: .auraYellow),
+                MetricBand(upperBound: 80, label: "Very humid", tint: .auraOrange),
+                MetricBand(upperBound: .infinity, label: "Damp", tint: .auraRed),
+            ]
+        case .light:
+            [
+                MetricBand(upperBound: 20, label: "Dark", tint: .auraOrange),
+                MetricBand(upperBound: 80, label: "Dim", tint: .auraYellow),
+                MetricBand(upperBound: .infinity, label: "Bright", tint: .auraGreen),
             ]
         case .temperature:
+            // Kept on a cold-to-hot ramp rather than a severity one: the thermal card uses it
+            // for a background wash, where blue reading as "cold" is the point.
             [
                 MetricBand(upperBound: 16, label: "Cold", tint: .auraBlue),
                 MetricBand(upperBound: 19, label: "Cool", tint: .auraCyan),
                 MetricBand(upperBound: 25, label: "Comfortable", tint: .auraGreen),
                 MetricBand(upperBound: 28, label: "Warm", tint: .auraAmber),
                 MetricBand(upperBound: .infinity, label: "Hot", tint: .auraRed),
-            ]
-        case .humidity:
-            [
-                MetricBand(upperBound: 30, label: "Dry", tint: .auraAmber),
-                MetricBand(upperBound: 40, label: "A bit dry", tint: .auraLime),
-                MetricBand(upperBound: 60, label: "Comfortable", tint: .auraGreen),
-                MetricBand(upperBound: 70, label: "Humid", tint: .auraCyan),
-                MetricBand(upperBound: .infinity, label: "Very humid", tint: .auraBlue),
-            ]
-        case .light:
-            [
-                MetricBand(upperBound: 10, label: "Dark", tint: .auraIndigo),
-                MetricBand(upperBound: 80, label: "Dim", tint: .auraViolet),
-                MetricBand(upperBound: 300, label: "Soft", tint: .auraCyan),
-                MetricBand(upperBound: 800, label: "Bright", tint: .auraAmber),
-                MetricBand(upperBound: .infinity, label: "Very bright", tint: .auraYellow),
             ]
         }
     }
@@ -110,21 +103,52 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
         return band(for: value).label
     }
 
-    /// Where a value sits across `scale`, as 0...1.
-    func position(of value: Double) -> Double {
-        let span = scale.upperBound - scale.lowerBound
+    /// Where a value sits across `range`, as 0...1.
+    func position(of value: Double, in range: ClosedRange<Double>? = nil) -> Double {
+        let range = range ?? scale
+        let span = range.upperBound - range.lowerBound
         guard span > 0, value.isFinite else { return 0 }
-        return ((value - scale.lowerBound) / span).clamped(to: 0...1)
-    }
-
-    /// The value at a fraction along `scale` — used to colour each dot of the indicator.
-    func value(atPosition fraction: Double) -> Double {
-        scale.lowerBound + fraction.clamped(to: 0...1) * (scale.upperBound - scale.lowerBound)
+        return ((value - range.lowerBound) / span).clamped(to: 0...1)
     }
 
     func format(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "––" }
         return value.formatted(.number.precision(.fractionLength(fractionDigits)))
+    }
+
+    /// Band colours laid out across `domain`, bottom to top — for colouring a chart's line by
+    /// height, so it shifts green → yellow → red as the trace climbs through the thresholds.
+    func gradientStops(over domain: ClosedRange<Double>) -> [Gradient.Stop] {
+        let span = domain.upperBound - domain.lowerBound
+        guard span > 0 else {
+            return [Gradient.Stop(color: tint(for: domain.lowerBound), location: 0)]
+        }
+
+        var stops: [Gradient.Stop] = []
+        var lower = domain.lowerBound
+
+        for band in bands {
+            guard band.upperBound > lower else { continue }   // entirely below the visible range
+            let upper = min(band.upperBound, domain.upperBound)
+            guard upper > lower else { break }                // past the top of the range
+
+            let start = CGFloat((lower - domain.lowerBound) / span)
+            let end = CGFloat((upper - domain.lowerBound) / span)
+            stops.append(Gradient.Stop(color: band.tint, location: start))
+            stops.append(Gradient.Stop(color: band.tint, location: end))
+
+            lower = upper
+            if lower >= domain.upperBound { break }
+        }
+
+        if stops.count < 2 {
+            let colour = tint(for: (domain.lowerBound + domain.upperBound) / 2)
+            return [
+                Gradient.Stop(color: colour, location: 0),
+                Gradient.Stop(color: colour, location: 1),
+            ]
+        }
+        return stops
     }
 
     var explainer: String {
@@ -154,7 +178,7 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable, Sendable {
     }
 }
 
-/// One quality step within a metric — everything below `upperBound` and above the previous band.
+/// One severity step within a metric — everything below `upperBound` and above the previous band.
 struct MetricBand: Hashable, Sendable {
     let upperBound: Double
     let label: String
