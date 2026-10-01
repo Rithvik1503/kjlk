@@ -18,12 +18,12 @@ struct NowView: View {
 
                 ScrollView {
                     VStack(spacing: 14) {
-                        // Temperature is not here — it gets its own section below.
+                        thermalSection
+
+                        // Temperature is not here — it leads the screen, above.
                         ForEach([MetricKind.co2, .humidity, .light]) { metric in
                             MetricCard(metric: metric, value: store.value(for: metric))
                         }
-
-                        thermalSection
 
                         if let message = store.errorMessage {
                             errorRow(message)
@@ -58,7 +58,6 @@ struct NowView: View {
                 comparison: store.thermalComparison
             )
         }
-        .padding(.top, 10)
     }
 
     // MARK: - Toolbar
