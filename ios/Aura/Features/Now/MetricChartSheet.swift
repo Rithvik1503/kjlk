@@ -12,7 +12,6 @@ struct MetricChartSheet: View {
     /// The range the card's grid uses, so the two agree about what "full" means.
     let range: ClosedRange<Double>
 
-    @Environment(\.dismiss) private var dismiss
     @State private var scrubbedAt: Date?
 
     private let calendar = Calendar.current
@@ -26,14 +25,9 @@ struct MetricChartSheet: View {
                 Spacer(minLength: 0)
             }
             .padding(20)
-            .background(Color.auraBase.ignoresSafeArea())
+            .background(Color.black.ignoresSafeArea())
             .navigationTitle(metric.title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
         .presentationDetents([.medium, .large])
         .preferredColorScheme(.dark)
@@ -181,8 +175,7 @@ struct MetricChartSheet: View {
             .chartXScale(domain: dayStart...dayEnd)
             .chartXSelection(value: $scrubbedAt)
             .chartYAxis {
-                // Values only — no gridlines, and nothing along the bottom. Scrubbing reports
-                // the time, so an axis of hours is a row of noise under the trace.
+                // Values only — the gridlines they usually carry would cut across the trace.
                 AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
                     AxisValueLabel {
                         if let number = value.as(Double.self) {
@@ -193,7 +186,17 @@ struct MetricChartSheet: View {
                     }
                 }
             }
-            .chartXAxis(.hidden)
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .hour, count: 6)) { value in
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(.dateTime.hour()).uppercased())
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
             .frame(height: 190)
             .padding(.vertical, 8)
         }

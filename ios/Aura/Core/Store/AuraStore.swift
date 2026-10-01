@@ -140,6 +140,11 @@ final class AuraStore: ObservableObject {
         !isViewingToday
     }
 
+    /// The Trends screen's store, on the same connection — one client, one session, one
+    /// token refresh between them. Owned here rather than built per view, so it isn't
+    /// reallocated on every body evaluation.
+    private(set) lazy var trends: TrendsStore = TrendsStore(client: client, preferences: preferences)
+
     // MARK: - Launch
 
     func start() async {

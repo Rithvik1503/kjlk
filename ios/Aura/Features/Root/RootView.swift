@@ -34,17 +34,23 @@ struct RootView: View {
     }
 }
 
-/// The system tab bar.
+/// The system tab bar. Settings is a sheet from either screen's header rather than a tab.
 ///
-/// Home is the only destination — settings is a sheet from the header, and there is nowhere
-/// else to go yet. Using `TabView` rather than a hand-rolled bar means it picks up Liquid
-/// Glass on iOS 26, and a second tab is one `.tabItem` away.
+/// Using `TabView` rather than a hand-rolled bar means it picks up Liquid Glass on iOS 26
+/// without a single availability check.
 struct HomeTabView: View {
+    @EnvironmentObject private var store: AuraStore
+
     var body: some View {
         TabView {
             NowView()
                 .tabItem {
                     Label("Home", systemImage: "house.fill")
+                }
+
+            TrendsView(trends: store.trends)
+                .tabItem {
+                    Label("Trends", systemImage: "chart.xyaxis.line")
                 }
         }
     }

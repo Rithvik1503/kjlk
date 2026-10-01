@@ -55,6 +55,11 @@ rest alone. It sets up:
 - a check constraint rejecting physically impossible values, so one bad sensor read can't
   rescale every chart
 
+`0003_metric_buckets.sql` is required by the Trends tab. It aggregates per-day and per-month
+means in Postgres, bucketed in your own time zone — six months of minute-resolution readings is
+a quarter of a million rows and the screen needs six numbers from them. Without it Trends says
+so and tells you which file to run.
+
 `0002_thermal_baseline.sql` is optional. It adds a function that averages temperature over a
 window in Postgres, which the thermal card uses for its "than usual" comparison — a week of
 minute-resolution readings is around ten thousand rows and the app only needs one number from
@@ -180,6 +185,26 @@ here". Today resolves each metric independently, so a dropped BH1750 read doesn'
 light figure while the SCD40 in the same row is reporting fine.
 
 Settings is a sheet: monitor picker, account, sign out, disconnect.
+
+### Trends
+
+The second tab: every sensor over **7 days, a month, or 6 months**, one window picker driving
+all four rows. Stepping the header moves a whole window at a time, since the point of the
+screen is the shape rather than a single reading.
+
+Each row collapses to a title, a dot-matrix preview and the latest value, and expands into its
+own chart — dithered bars for days, a line for months — with a fixed y-axis, the period average,
+and dates along the bottom. Dragging across a chart scrubs it: the bar under your finger stays
+lit while the rest dim, and the row's value and date follow.
+
+Bars are drawn against a **fixed** axis per metric rather than the window's own minimum and
+maximum, so a bar's height means the same thing in every window and a quiet week doesn't get
+stretched to look like a dramatic one. Missing days keep their slot and draw a dim baseline, so
+a gap reads as "no data" instead of letting the next day slide into its place.
+
+The scrub gesture is a UIKit pan recogniser that fails itself the moment a touch moves further
+down than across. A SwiftUI `DragGesture` with a zero minimum distance wins against the
+enclosing `ScrollView`, and the page would stop scrolling wherever a chart happened to be.
 
 ### Notes on how it's built
 

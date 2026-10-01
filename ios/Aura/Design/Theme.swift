@@ -15,6 +15,10 @@ extension Color {
     static let auraDotOff = Color(hex: 0x1C1F26)
 
     static let auraPrimaryText = Color(hex: 0xF5F6F8)
+    /// Label text — section headings, axis values, unit chips.
+    static let auraMutedText = Color(hex: 0x8A909C)
+    /// The dimmest readable step: axis ticks and inactive segments.
+    static let auraDimText = Color(hex: 0x5C626E)
 
     // Accents, cold to hot.
     static let auraBlue = Color(hex: 0x3B82F6)
@@ -36,5 +40,13 @@ extension Color {
             blue: Double(hex & 0xFF) / 255,
             opacity: opacity
         )
+    }
+}
+
+extension Font {
+    /// Monospaced, tracked-out label type — the register the Trends screen sets its
+    /// headings, axis values and range labels in.
+    static func auraMono(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
+        .system(size: size, weight: weight, design: .monospaced)
     }
 }

@@ -235,6 +235,35 @@ actor SupabaseClient {
         return nil
     }
 
+    /// Per-day or per-month means of every sensor, aggregated by Postgres.
+    ///
+    /// Throws rather than returning empty when the function is missing, so the Trends screen
+    /// can tell "no data yet" apart from "the migration hasn't been run".
+    func metricBuckets(
+        from start: Date,
+        to end: Date,
+        unit: String,
+        timeZone: TimeZone,
+        deviceID: String?
+    ) async throws -> [MetricBucket] {
+        var body: [String: String] = [
+            "p_from": PostgresDate.string(from: start),
+            "p_to": PostgresDate.string(from: end),
+            "p_unit": unit,
+            "p_tz": timeZone.identifier,
+        ]
+        if let deviceID, !deviceID.isEmpty {
+            body["p_device"] = deviceID
+        }
+
+        let data = try await restPost(function: "aura_metric_buckets", body: body)
+        do {
+            return try JSONDecoder().decode([MetricBucket].self, from: data)
+        } catch {
+            throw SupabaseError.decoding(error.localizedDescription)
+        }
+    }
+
     private static let readingColumns =
         "id,device_id,recorded_at,co2_ppm,temperature_c,humidity_percent,light_lux"
 
