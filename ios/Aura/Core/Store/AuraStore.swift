@@ -90,10 +90,10 @@ final class AuraStore: ObservableObject {
         return values.reduce(0, +) / Double(values.count)
     }
 
-    var headlineCO2: Double? { value(for: .co2) }
-
+    /// Backdrop colour, driven by CO₂ — the metric that moves fastest and the one you can
+    /// actually act on.
     var tint: Color {
-        MetricKind.co2.tint(for: headlineCO2)
+        MetricKind.co2.tint(for: value(for: .co2))
     }
 
     var canGoForward: Bool {

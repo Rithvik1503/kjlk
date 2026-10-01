@@ -17,10 +17,10 @@ struct NowView: View {
                 AuraBackground(tint: store.tint)
 
                 ScrollView {
-                    VStack(spacing: 16) {
-                        CO2Card(value: store.headlineCO2)
-
-                        SensorRow(values: sensorValues)
+                    VStack(spacing: 14) {
+                        ForEach(MetricKind.allCases) { metric in
+                            MetricCard(metric: metric, value: store.value(for: metric))
+                        }
 
                         if let message = store.errorMessage {
                             errorRow(message)
@@ -105,17 +105,6 @@ struct NowView: View {
 
     private var dateLabel: String {
         store.selectedDate.formatted(.dateTime.day().month(.abbreviated))
-    }
-
-    /// Raw values for the three secondary sensors, skipping any that have no reading.
-    private var sensorValues: [MetricKind: Double] {
-        var values: [MetricKind: Double] = [:]
-        for metric in [MetricKind.temperature, .humidity, .light] {
-            if let value = store.value(for: metric) {
-                values[metric] = value
-            }
-        }
-        return values
     }
 
     private func errorRow(_ message: String) -> some View {
