@@ -44,6 +44,12 @@ struct MetricCard: View {
 
     private var reading: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
+            // Muted rather than band-tinted: on this screen the marker in the grid is the
+            // only thing that should be carrying colour.
+            Image(systemName: metric.symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.auraPrimaryText.opacity(0.45))
+
             Text(metric.format(value))
                 .font(.system(size: 15, weight: .bold))
                 .monospacedDigit()
